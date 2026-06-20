@@ -218,19 +218,180 @@ export async function chatWithCompanion(message, recentEntries) {
 
   const result = await generateText({
     model: getModel(),
-    system: buildSafetyInstruction(),
-    prompt: `The student's complete available journal history is provided below as JSON, most recent first. Use it as durable memory for this conversation, but only reference details that are actually present.
-${JSON.stringify(context).slice(0, 14000)}
+    system: [
+      buildSafetyInstruction(),
+      'CRITICAL BEHAVIOR: You are a curious, empathetic companion — NOT an advice machine.',
+      'Your first job is to UNDERSTAND before you respond. Lead with genuine curiosity about what the student is experiencing.',
+      'Ask one thoughtful question per response to understand their situation more deeply.',
+      'NEVER open with advice, "you should", "try this", or a list of tips unless they explicitly asked for one.',
+      'Reflect back what you heard first ("It sounds like..."), then ask what feels true or what is underneath that.',
+      'Use warm, conversational language — not clinical or coach-speak.',
+      'If they share pain, sit with it first. Say "that sounds really hard" before anything else.',
+      'Only offer a concrete idea if they asked for one, AND you already understand the real situation.',
+      'Keep responses to 2-3 short paragraphs max. No bullet lists unless explicitly requested.',
+      'End EVERY response with a genuine question that helps you understand them better.'
+    ].join('\n'),
+    prompt: `The student's journal history (most recent first) — use only what is actually here:
+${JSON.stringify(context).slice(0, 12000)}
 
-Student message:
+Student says:
 ${message}
 
-Respond with 3 concise paragraphs maximum. Stay empathetic and actionable. When useful, connect today's request to prior journal entries naturally. If you notice concerning patterns across entries (increasing stress, declining mood, poor sleep), gently point them out.`,
-    temperature: 0.5,
-    maxTokens: 650
+Respond with empathy and curiosity. Reflect what you heard, sit with any pain they expressed, and end with one genuine question to understand them better. Do not lecture. Do not list tips. Ask before advising.`,
+    temperature: 0.55,
+    maxTokens: 500
   });
 
   return result.text;
+}
+
+/* ─── Future Letter ──────────────────────────────────────────────────────── */
+
+const futureLetterSchema = z.object({
+  letter: z.string().min(80),
+  keyStrengths: z.array(z.string().min(4)).min(1).max(4),
+  reminder: z.string().min(10)
+});
+
+export async function generateFutureLetter(entries) {
+  const context = entries.slice(0, 10).map((entry) => ({
+    exam: entry.exam,
+    mood: entry.mood,
+    sleepHours: entry.sleepHours,
+    stress: entry.stress,
+    journal: entry.journal?.slice(0, 400),
+    stressTriggers: entry.analysis?.stressTriggers,
+    encouragement: entry.analysis?.encouragement
+  }));
+
+  const result = await generateObject({
+    model: getModel(),
+    schema: futureLetterSchema,
+    system: buildSafetyInstruction(),
+    prompt: `Write a heartfelt letter from this student's FUTURE SELF — written as if they have already survived their board exam season and are looking back.
+
+The letter should:
+- Speak directly to the specific fears and struggles visible in their journal history
+- Reference actual details from their entries (the exam they're preparing for, specific worries they mentioned)
+- Be warm, personal, and emotionally honest — not generic motivation
+- Acknowledge the real difficulty they are in right now
+- Share what they learned from this period
+- NOT give study tips or advice — only emotional truth and perspective
+
+Journal history (real data):
+${JSON.stringify(context).slice(0, 6000)}
+
+Return:
+- letter: the full letter from future-self (3-4 paragraphs, written in first person as the future self speaking to current self)
+- keyStrengths: 2-4 actual strengths visible in their journal data
+- reminder: one short sentence — the single most important thing they need to hear right now`,
+    temperature: 0.7
+  });
+
+  return result.object;
+}
+
+/* ─── Pressure Valve Clarity ─────────────────────────────────────────────── */
+
+const pressureValveSchema = z.object({
+  realConcern: z.string().min(10),
+  whatYouFeel: z.string().min(10),
+  oneNextStep: z.string().min(10),
+  validation: z.string().min(10)
+});
+
+export async function processPressureValve(rawDump) {
+  const result = await generateObject({
+    model: getModel(),
+    schema: pressureValveSchema,
+    system: buildSafetyInstruction(),
+    prompt: `A student just did a 60-second unfiltered writing dump. Read it carefully and extract the real emotional signal underneath.
+
+Dump:
+${rawDump.slice(0, 3000)}
+
+Return:
+- realConcern: in one clear sentence, what is this person ACTUALLY worried about underneath all the chaos
+- whatYouFeel: name the primary emotion here honestly (not "stressed" — be precise: "afraid of disappointing your parents", "exhausted from pretending to be okay", etc.)
+- oneNextStep: the single smallest possible next step they can take in the next 10 minutes
+- validation: 1-2 sentences that validate this is genuinely hard, without minimizing or fixing`,
+    temperature: 0.5
+  });
+
+  return result.object;
+}
+
+/* ─── Worry Analysis ─────────────────────────────────────────────────────── */
+
+const worryAnalysisSchema = z.object({
+  acknowledgment: z.string().min(10),
+  isInTheirControl: z.boolean(),
+  whatTheyCanControl: z.string().min(10),
+  parkUntil: z.string().min(4),
+  parkMessage: z.string().min(10)
+});
+
+export async function analyzeWorry(worryText) {
+  const result = await generateObject({
+    model: getModel(),
+    schema: worryAnalysisSchema,
+    system: buildSafetyInstruction(),
+    prompt: `A student is trying to "park" this worry so they can focus on studying without it looping in their head.
+
+Worry: ${worryText.slice(0, 500)}
+
+Help them park it safely:
+- acknowledgment: 1 sentence genuinely acknowledging this worry is real and understandable
+- isInTheirControl: can they actually do something about this RIGHT NOW?
+- whatTheyCanControl: what small aspect of this CAN they influence (even if worry itself is not fully in their control)
+- parkUntil: a short label for when to revisit this (e.g. "After your exam", "This weekend", "When results come")
+- parkMessage: a warm 1-sentence message like "This worry is now parked. You gave it space. You can come back to it [parkUntil]."`,
+    temperature: 0.5
+  });
+
+  return result.object;
+}
+
+/* ─── Image Analysis ─────────────────────────────────────────────────────── */
+
+const imageAnalysisSchema = z.object({
+  observations: z.array(z.string().min(4)).min(1).max(6),
+  stressSignals: z.array(z.string().min(4)).max(4),
+  positiveSignals: z.array(z.string().min(4)).max(3),
+  summary: z.string().min(10),
+  suggestion: z.string().min(10)
+});
+
+export async function analyzeImage(imageBuffer, mimeType, type) {
+  const prompts = {
+    desk: `Look at this study desk photo. Observe what you can see and identify signals that might relate to the student's stress or wellness.
+Look for: clutter or organization, number of coffee cups/energy drinks, time indicators (clock, lighting), how many books/papers, sticky notes, phone presence, lighting quality, signs of long hours.
+Be observational and kind — not judgmental.`,
+    handwriting: `Look at this handwriting sample. Observe characteristics that might indicate the student's current mental state.
+Look for: pressure (light/heavy), speed indicators (rushed/careful), consistency, clarity, any crossed-out words or corrections, general neatness.
+Be observational and kind — do not diagnose.`,
+    face: `Look at this photo. Observe what you can about this person's apparent current state.
+Look for: apparent tiredness (eye appearance), tension in face/posture, overall energy level suggested by appearance.
+Be gentle, observational, and kind. Do NOT diagnose emotions or mental states definitively — only describe what is visually observable.`
+  };
+
+  const result = await generateObject({
+    model: getModel(),
+    schema: imageAnalysisSchema,
+    system: buildSafetyInstruction(),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: `${prompts[type] || prompts.desk}\n\nReturn your observations in the schema provided.` },
+          { type: 'image', image: imageBuffer, mimeType: mimeType || 'image/jpeg' }
+        ]
+      }
+    ],
+    temperature: 0.4
+  });
+
+  return result.object;
 }
 
 /* ─── Entry Insights ─────────────────────────────────────────────────────── */

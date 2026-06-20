@@ -14,6 +14,7 @@ const memoryExamCountdowns = new Map();
 const memoryWeeklyReports = new Map();
 const memoryStreaks = new Map();
 const memoryMockTests = new Map();
+const memoryWorries = new Map();
 
 function getPool() {
   const url = process.env.DATABASE_URL;
@@ -154,6 +155,21 @@ async function initDb(client) {
     );
     CREATE INDEX IF NOT EXISTS idx_mock_tests_user_created
       ON mock_tests(user_key, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS worry_items (
+      id UUID PRIMARY KEY,
+      user_key TEXT NOT NULL,
+      worry_text TEXT NOT NULL CHECK (char_length(worry_text) BETWEEN 4 AND 500),
+      acknowledgment TEXT NOT NULL DEFAULT '',
+      is_in_their_control BOOLEAN NOT NULL DEFAULT FALSE,
+      what_they_can_control TEXT NOT NULL DEFAULT '',
+      park_until TEXT NOT NULL DEFAULT '',
+      park_message TEXT NOT NULL DEFAULT '',
+      resolved BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_worry_items_user_created
+      ON worry_items(user_key, created_at DESC);
   `);
   await client.query(`
     ALTER TABLE wellness_entries
@@ -827,6 +843,84 @@ export async function listMockTests(userKey, limit = 20) {
       aiAnalysis: row.ai_analysis,
       createdAt: row.created_at
     }));
+  } finally {
+    client.release();
+  }
+}
+
+/* ─── Worry Parking Lot ──────────────────────────────────────────────────── */
+
+export async function saveWorry(userKey, worry) {
+  const record = { id: randomUUID(), ...worry, resolved: false, createdAt: new Date().toISOString() };
+  const activePool = getPool();
+  if (!activePool) {
+    const list = memoryWorries.get(userKey) || [];
+    list.unshift(record);
+    memoryWorries.set(userKey, list.slice(0, 50));
+    return record;
+  }
+
+  const client = await activePool.connect();
+  try {
+    await initDb(client);
+    await client.query(
+      `INSERT INTO worry_items (id, user_key, worry_text, acknowledgment, is_in_their_control, what_they_can_control, park_until, park_message)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [record.id, userKey, worry.worryText, worry.acknowledgment, worry.isInTheirControl, worry.whatTheyCanControl, worry.parkUntil, worry.parkMessage]
+    );
+    return record;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listWorries(userKey, limit = 20) {
+  const activePool = getPool();
+  if (!activePool) {
+    return (memoryWorries.get(userKey) || []).slice(0, limit);
+  }
+
+  const client = await activePool.connect();
+  try {
+    await initDb(client);
+    const result = await client.query(
+      `SELECT id, worry_text, acknowledgment, is_in_their_control, what_they_can_control, park_until, park_message, resolved, created_at
+       FROM worry_items WHERE user_key = $1 ORDER BY created_at DESC LIMIT $2`,
+      [userKey, limit]
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      worryText: row.worry_text,
+      acknowledgment: row.acknowledgment,
+      isInTheirControl: row.is_in_their_control,
+      whatTheyCanControl: row.what_they_can_control,
+      parkUntil: row.park_until,
+      parkMessage: row.park_message,
+      resolved: row.resolved,
+      createdAt: row.created_at
+    }));
+  } finally {
+    client.release();
+  }
+}
+
+export async function resolveWorry(userKey, worryId) {
+  const activePool = getPool();
+  if (!activePool) {
+    const list = memoryWorries.get(userKey) || [];
+    const updated = list.map((w) => w.id === worryId ? { ...w, resolved: true } : w);
+    memoryWorries.set(userKey, updated);
+    return updated.find((w) => w.id === worryId) || null;
+  }
+
+  const client = await activePool.connect();
+  try {
+    await initDb(client);
+    await client.query(
+      'UPDATE worry_items SET resolved = TRUE WHERE id = $1 AND user_key = $2',
+      [worryId, userKey]
+    );
+    return { id: worryId, resolved: true };
   } finally {
     client.release();
   }

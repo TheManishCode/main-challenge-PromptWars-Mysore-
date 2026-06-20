@@ -57,6 +57,19 @@ export const burnoutQuerySchema = z.object({
   period: z.coerce.number().int().min(7).max(90).optional().default(30)
 });
 
+export const worrySchema = z.object({
+  worry: z.string().trim().min(4).max(500)
+});
+
+export const imageAnalysisSchema = z.object({
+  imageDataUrl: z.string().min(10).max(8_000_000),
+  type: z.enum(['desk', 'handwriting', 'face'])
+});
+
+export const pressureValveSchema = z.object({
+  text: z.string().trim().min(4).max(4000)
+});
+
 export function parseJsonBody(schema, body) {
   const parsed = schema.safeParse(body);
   if (!parsed.success) {

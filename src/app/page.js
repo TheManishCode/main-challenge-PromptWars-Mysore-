@@ -7,8 +7,10 @@ const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
 const SECTIONS = [
   { id: 'journal', label: 'Journal' },
+  { id: 'relief', label: 'Relief Room' },
   { id: 'map', label: 'Map' },
   { id: 'chat', label: 'Chat' },
+  { id: 'scan', label: 'Scan' },
   { id: 'guestbook', label: 'Guestbook' }
 ];
 
@@ -16,12 +18,7 @@ const INITIAL_FORM = { mood: 5, energy: 5, sleepHours: 7, exam: '', journal: '' 
 
 function formatDate(dateStr) {
   if (!dateStr) return 'Just now';
-  return new Date(dateStr).toLocaleString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
+  return new Date(dateStr).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
 function stressClass(level) {
@@ -30,16 +27,18 @@ function stressClass(level) {
   return 'tone-low';
 }
 
+function moodToColor(mood) {
+  const m = Number(mood) || 5;
+  if (m <= 3) return '#e45d4f';
+  if (m <= 5) return '#f2a93b';
+  if (m <= 7) return '#d89b2b';
+  return '#4b8f63';
+}
+
 export default function Home() {
   if (!hasClerk) {
-    return (
-      <AuthenticatedApp
-        auth={{ isLoaded: true, isSignedIn: false, user: null }}
-        clerkEnabled={false}
-      />
-    );
+    return <AuthenticatedApp auth={{ isLoaded: true, isSignedIn: false, user: null }} clerkEnabled={false} />;
   }
-
   return <ClerkAuthenticatedApp />;
 }
 
@@ -55,6 +54,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   const [theme, setTheme] = useState('light');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [entries, setEntries] = useState([]);
+  const [worries, setWorries] = useState([]);
   const [guestbook, setGuestbook] = useState([]);
   const [form, setForm] = useState(INITIAL_FORM);
   const [chatText, setChatText] = useState('');
@@ -64,15 +64,21 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   const [error, setError] = useState('');
   const chatEndRef = useRef(null);
 
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
+  useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
 
   const loadEntries = useCallback(async () => {
     const res = await fetch('/api/entries');
     if (!res.ok) throw new Error('Unable to load your journal');
     const data = await res.json();
     setEntries(data.entries || []);
+  }, []);
+
+  const loadWorries = useCallback(async () => {
+    const res = await fetch('/api/worry');
+    if (res.ok) {
+      const data = await res.json();
+      setWorries(data.worries || []);
+    }
   }, []);
 
   const loadGuestbook = useCallback(async () => {
@@ -86,11 +92,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
 
   useEffect(() => {
     if (!isLoaded || isSignedIn || testerMode) return;
-    fetch('/api/entries')
-      .then((res) => {
-        if (res.ok) setTesterMode(true);
-      })
-      .catch(() => {});
+    fetch('/api/entries').then((res) => { if (res.ok) setTesterMode(true); }).catch(() => {});
   }, [isLoaded, isSignedIn, testerMode]);
 
   useEffect(() => {
@@ -100,19 +102,19 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
       .then(() => {
         setShowOnboarding(!localStorage.getItem(seenKey));
         setError('');
-        return Promise.all([loadEntries(), loadGuestbook()]);
+        return Promise.all([loadEntries(), loadGuestbook(), loadWorries()]);
       })
       .catch((err) => setError(err.message));
-  }, [hasAppAccess, loadEntries, loadGuestbook, user?.id]);
+  }, [hasAppAccess, loadEntries, loadGuestbook, loadWorries, user?.id]);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatLog]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatLog]);
 
   const metrics = useMemo(() => {
-    if (!entries.length) return { count: 0, mood: '-', sleep: '-' };
+    if (!entries.length) return { count: 0, mood: '-', sleep: '-', burnoutRisk: null };
     const avg = (field) => (entries.reduce((sum, item) => sum + Number(item[field]), 0) / entries.length).toFixed(1);
-    return { count: entries.length, mood: avg('mood'), sleep: `${avg('sleepHours')}h` };
+    const recent = entries.slice(0, 7);
+    const avgBurnout = recent.reduce((sum, e) => sum + (e.analysis?.burnoutRiskScore || 40), 0) / recent.length;
+    return { count: entries.length, mood: avg('mood'), sleep: `${avg('sleepHours')}h`, burnoutRisk: Math.round(avgBurnout) };
   }, [entries]);
 
   function finishOnboarding() {
@@ -120,24 +122,18 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
     setShowOnboarding(false);
   }
 
-  function updateForm(name, value) {
-    setForm((current) => ({ ...current, [name]: value }));
-  }
+  function updateForm(name, value) { setForm((c) => ({ ...c, [name]: value })); }
 
   async function submitEntry(event) {
     event.preventDefault();
     setLoading('entry');
     setError('');
     try {
-      const res = await fetch('/api/entries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
-      });
+      const res = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unable to save this journal entry');
       if (data.crisis) throw new Error(data.crisis.message);
-      setEntries((current) => [data.entry, ...current]);
+      setEntries((c) => [data.entry, ...c]);
       setForm(INITIAL_FORM);
     } catch (err) {
       setError(err.message);
@@ -153,9 +149,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
       const res = await fetch(`/api/entries/${entryId}/insights`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unable to invoke suggestions');
-      setEntries((current) => current.map((entry) => (
-        entry.id === entryId ? { ...entry, insightBubbles: data.insights } : entry
-      )));
+      setEntries((c) => c.map((e) => e.id === entryId ? { ...e, insightBubbles: data.insights } : e));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -168,18 +162,14 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
     if (!chatText.trim()) return;
     const outgoing = chatText.trim();
     setChatText('');
-    setChatLog((current) => [...current, { role: 'student', content: outgoing }]);
+    setChatLog((c) => [...c, { role: 'student', content: outgoing }]);
     setLoading('chat');
     setError('');
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: outgoing })
-      });
+      const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: outgoing }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unable to reach the companion');
-      setChatLog(data.messages?.length ? data.messages : (current) => [...current, { role: 'companion', content: data.reply }]);
+      setChatLog(data.messages?.length ? data.messages : (c) => [...c, { role: 'companion', content: data.reply }]);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -192,14 +182,10 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
     setLoading('guestbook');
     setError('');
     try {
-      const res = await fetch('/api/guestbook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(guestForm)
-      });
+      const res = await fetch('/api/guestbook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(guestForm) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unable to add guestbook note');
-      setGuestbook((current) => [data.post, ...current]);
+      setGuestbook((c) => [data.post, ...c]);
       setGuestForm({ authorName: '', message: '' });
     } catch (err) {
       setError(err.message);
@@ -217,6 +203,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
       if (!res.ok) throw new Error(data.error || 'Unable to sign out');
       setTesterMode(false);
       setEntries([]);
+      setWorries([]);
       setGuestbook([]);
       setChatLog([]);
       setForm(INITIAL_FORM);
@@ -232,6 +219,9 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   if (!isLoaded) return <LoadingScreen />;
   if (!hasAppAccess) return <AuthScreen clerkEnabled={clerkEnabled} onTesterReady={() => setTesterMode(true)} />;
 
+  const burnoutRisk = metrics.burnoutRisk;
+  const burnoutClass = burnoutRisk === null ? '' : burnoutRisk > 65 ? 'risk-high' : burnoutRisk > 40 ? 'risk-mid' : 'risk-low';
+
   return (
     <main className="product-shell">
       <header className="topbar">
@@ -240,6 +230,12 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
           <h1>MindTrail</h1>
         </div>
         <div className="topbar-actions">
+          {burnoutRisk !== null && (
+            <div className={`burnout-badge ${burnoutClass}`} title="Burnout risk from recent entries">
+              <span>Burnout risk</span>
+              <strong>{burnoutRisk}%</strong>
+            </div>
+          )}
           <button className="icon-button" type="button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} title="Toggle theme">
             {theme === 'light' ? 'Dark' : 'Light'}
           </button>
@@ -251,19 +247,14 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
 
       <section className="status-strip" aria-label="Journal summary">
         <Stat label="Entries" value={metrics.count} />
-        <Stat label="Average mood" value={metrics.mood} />
-        <Stat label="Average sleep" value={metrics.sleep} />
+        <Stat label="Avg mood" value={metrics.mood} />
+        <Stat label="Avg sleep" value={metrics.sleep} />
+        {burnoutRisk !== null && <Stat label="Burnout risk" value={`${burnoutRisk}%`} highlight={burnoutRisk > 60} />}
       </section>
 
       <nav className="section-nav" aria-label="Primary">
         {SECTIONS.map((item) => (
-          <button
-            key={item.id}
-            className="nav-pill"
-            data-active={section === item.id}
-            onClick={() => setSection(item.id)}
-            type="button"
-          >
+          <button key={item.id} className="nav-pill" data-active={section === item.id} onClick={() => setSection(item.id)} type="button">
             {item.label}
           </button>
         ))}
@@ -281,6 +272,16 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
           onInvoke={invokeInsights}
         />
       )}
+      {section === 'relief' && (
+        <ReliefRoomSection
+          entries={entries}
+          worries={worries}
+          setWorries={setWorries}
+          loading={loading}
+          setLoading={setLoading}
+          setError={setError}
+        />
+      )}
       {section === 'map' && <GraphMapSection entries={entries} />}
       {section === 'chat' && (
         <ChatSection
@@ -292,6 +293,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
           onSubmit={sendChat}
         />
       )}
+      {section === 'scan' && <ScanSection />}
       {section === 'guestbook' && (
         <GuestbookSection
           posts={guestbook}
@@ -305,42 +307,596 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   );
 }
 
-function buildGraph(entries) {
-  const nodes = [
-    {
-      id: 'center',
-      type: 'core',
-      label: 'Journal history',
-      detail: `${entries.length} saved ${entries.length === 1 ? 'entry' : 'entries'}`,
-      radius: 30
+/* ─── Relief Room ─────────────────────────────────────────────────────────── */
+
+function ReliefRoomSection({ entries, worries, setWorries, loading, setLoading, setError }) {
+  const [reliefTab, setReliefTab] = useState('valve');
+  const [valveText, setValveText] = useState('');
+  const [valveSeconds, setValveSeconds] = useState(0);
+  const [valveRunning, setValveRunning] = useState(false);
+  const [valveClarity, setValveClarity] = useState(null);
+  const [worryText, setWorryText] = useState('');
+  const [letter, setLetter] = useState(null);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (!valveRunning) return;
+    timerRef.current = setInterval(() => {
+      setValveSeconds((s) => {
+        if (s >= 60) {
+          clearInterval(timerRef.current);
+          setValveRunning(false);
+          return 60;
+        }
+        return s + 1;
+      });
+    }, 1000);
+    return () => clearInterval(timerRef.current);
+  }, [valveRunning]);
+
+  function startValve() {
+    setValveText('');
+    setValveClarity(null);
+    setValveSeconds(0);
+    setValveRunning(true);
+  }
+
+  async function submitValve() {
+    if (!valveText.trim()) return;
+    setLoading('valve');
+    setError('');
+    try {
+      const res = await fetch('/api/pressure-valve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: valveText })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to process');
+      setValveClarity(data.clarity);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading('');
     }
+  }
+
+  async function submitWorry(e) {
+    e.preventDefault();
+    if (!worryText.trim()) return;
+    setLoading('worry');
+    setError('');
+    try {
+      const res = await fetch('/api/worry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ worry: worryText })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to park this worry');
+      setWorries((c) => [data.worry, ...c]);
+      setWorryText('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading('');
+    }
+  }
+
+  async function resolveWorry(id) {
+    try {
+      const res = await fetch('/api/worry', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      if (!res.ok) return;
+      setWorries((c) => c.map((w) => w.id === id ? { ...w, resolved: true } : w));
+    } catch {
+      // ignore
+    }
+  }
+
+  async function fetchLetter() {
+    setLoading('letter');
+    setError('');
+    setLetter(null);
+    try {
+      const res = await fetch('/api/future-letter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to generate letter');
+      setLetter(data.letter);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading('');
+    }
+  }
+
+  const timeline = computeAlternateTimelines(entries);
+
+  return (
+    <section className="relief-section">
+      <div className="section-heading">
+        <p className="eyebrow">Relief Room</p>
+        <h2>Tools that actually help</h2>
+      </div>
+
+      <nav className="relief-tabs" aria-label="Relief tools">
+        {[['valve', 'Pressure Valve'], ['worry', 'Worry Parking Lot'], ['letter', "Tomorrow's Letter"], ['timeline', 'Alternate Timeline']].map(([id, label]) => (
+          <button key={id} type="button" className="relief-tab" data-active={reliefTab === id} onClick={() => setReliefTab(id)}>{label}</button>
+        ))}
+      </nav>
+
+      {reliefTab === 'valve' && (
+        <div className="valve-panel">
+          <div className="valve-header">
+            <h3>Pressure Valve</h3>
+            <p className="muted">60 seconds. No filter. No judgment. Type everything in your head — panic, rage, fear, loop-thoughts. All of it. Then let the AI find what&apos;s really going on.</p>
+          </div>
+          {!valveRunning && !valveClarity && valveSeconds === 0 && (
+            <button className="valve-start-btn" type="button" onClick={startValve}>
+              Open the valve
+            </button>
+          )}
+          {(valveRunning || (valveSeconds > 0 && !valveClarity)) && (
+            <div className="valve-active">
+              <div className="valve-timer" data-urgent={valveSeconds >= 50}>
+                {60 - valveSeconds}s
+              </div>
+              <textarea
+                className="input valve-textarea"
+                value={valveText}
+                onChange={(e) => setValveText(e.target.value)}
+                placeholder="Write everything. Don't think. Just type."
+                autoFocus
+                maxLength={4000}
+              />
+              {!valveRunning && valveSeconds >= 60 && (
+                <button className="primary-button" type="button" onClick={submitValve} disabled={loading === 'valve'}>
+                  {loading === 'valve' ? 'Reading your mind...' : 'See what this is really about'}
+                </button>
+              )}
+              {valveRunning && valveText.length > 20 && (
+                <button className="secondary-button" type="button" onClick={() => { setValveRunning(false); }}>
+                  Done early
+                </button>
+              )}
+            </div>
+          )}
+          {valveClarity && (
+            <div className="valve-clarity">
+              <div className="clarity-card">
+                <p className="clarity-label">What this is really about</p>
+                <p className="clarity-concern">{valveClarity.realConcern}</p>
+              </div>
+              <div className="clarity-card">
+                <p className="clarity-label">What you&apos;re feeling</p>
+                <p>{valveClarity.whatYouFeel}</p>
+              </div>
+              <div className="clarity-card clarity-green">
+                <p className="clarity-label">One next step (next 10 minutes)</p>
+                <p><strong>{valveClarity.oneNextStep}</strong></p>
+              </div>
+              <div className="clarity-card clarity-muted">
+                <p>{valveClarity.validation}</p>
+              </div>
+              <button className="secondary-button" type="button" onClick={() => { setValveClarity(null); setValveSeconds(0); }}>
+                Open valve again
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {reliefTab === 'worry' && (
+        <div className="worry-panel">
+          <div className="valve-header">
+            <h3>Worry Parking Lot</h3>
+            <p className="muted">Can&apos;t stop thinking about something? Park it here. The AI acknowledges it, tells you what you can control, and holds it so your brain can let go.</p>
+          </div>
+          <form className="worry-form" onSubmit={submitWorry}>
+            <textarea
+              className="input"
+              value={worryText}
+              onChange={(e) => setWorryText(e.target.value)}
+              placeholder="What thought keeps looping? Write it here..."
+              maxLength={500}
+              required
+            />
+            <button className="primary-button" type="submit" disabled={loading === 'worry'}>
+              {loading === 'worry' ? 'Parking...' : 'Park this worry'}
+            </button>
+          </form>
+          <div className="worry-lot">
+            {!worries.length && <EmptyState title="Lot is empty" text="Park a worry above and your brain gets permission to move on." />}
+            {worries.map((w) => (
+              <div key={w.id} className={`worry-card ${w.resolved ? 'worry-resolved' : ''}`}>
+                <p className="worry-text">{w.worryText}</p>
+                <p className="worry-ack">{w.acknowledgment}</p>
+                <div className="worry-meta">
+                  <span className="worry-park-tag">📍 Parked until: {w.parkUntil}</span>
+                  {!w.resolved && (
+                    <button className="worry-resolve-btn" type="button" onClick={() => resolveWorry(w.id)}>
+                      Mark resolved
+                    </button>
+                  )}
+                  {w.resolved && <span className="worry-done-tag">✓ Resolved</span>}
+                </div>
+                {w.whatTheyCanControl && (
+                  <p className="worry-control"><strong>In your control:</strong> {w.whatTheyCanControl}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {reliefTab === 'letter' && (
+        <div className="letter-panel">
+          <div className="valve-header">
+            <h3>Tomorrow&apos;s Letter</h3>
+            <p className="muted">Read what your future self — the one who survived this exam season — wrote back to you. Based on your actual journal entries.</p>
+          </div>
+          {!letter && (
+            <button className="primary-button" type="button" onClick={fetchLetter} disabled={loading === 'letter'}>
+              {loading === 'letter' ? 'Writing from the future...' : entries.length ? 'Read your letter' : 'Write a journal entry first'}
+            </button>
+          )}
+          {letter && (
+            <div className="letter-card">
+              <div className="letter-header">
+                <span className="letter-from">From: You (someday)</span>
+                <span className="letter-to">To: You (right now)</span>
+              </div>
+              <div className="letter-body">
+                {letter.letter.split('\n\n').map((para, i) => <p key={i}>{para}</p>)}
+              </div>
+              {letter.keyStrengths?.length > 0 && (
+                <div className="letter-strengths">
+                  <p className="clarity-label">Your future self sees these strengths in you</p>
+                  <ul>
+                    {letter.keyStrengths.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                </div>
+              )}
+              {letter.reminder && (
+                <div className="letter-reminder">
+                  <p>{letter.reminder}</p>
+                </div>
+              )}
+              <button className="secondary-button" type="button" onClick={() => setLetter(null)} style={{ marginTop: '16px' }}>
+                Read again
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {reliefTab === 'timeline' && (
+        <div className="timeline-panel">
+          <div className="valve-header">
+            <h3>Alternate Timeline</h3>
+            <p className="muted">Based on your real journal data — see how small changes would shift your burnout risk over the next 2 weeks.</p>
+          </div>
+          {!timeline ? (
+            <EmptyState title="No data yet" text="Save at least 2 journal entries to generate your alternate timelines." />
+          ) : (
+            <div className="timeline-scenarios">
+              <ScenarioBar
+                label="Current path"
+                risk={timeline.currentRisk}
+                description={`At your current pace — avg sleep ${timeline.avgSleep}h, stress ${timeline.avgStress}/10`}
+                color="var(--accent)"
+              />
+              <ScenarioBar
+                label="+1 hour sleep each night"
+                risk={timeline.sleepImprovedRisk}
+                description={`Sleep is the #1 burnout buffer. Even one hour shifts your trajectory.`}
+                color="var(--brand)"
+              />
+              <ScenarioBar
+                label="20% fewer study hours + real breaks"
+                risk={timeline.balancedRisk}
+                description="Paradoxically, studying smarter reduces burnout without reducing learning."
+                color="var(--green)"
+              />
+              {timeline.contagionSources.length > 0 && (
+                <div className="contagion-card">
+                  <h4>Stress Contagion Detected</h4>
+                  <p className="muted">Your journal mentions external stress sources. These are likely amplifying your internal load:</p>
+                  <ul>
+                    {timeline.contagionSources.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                  <p className="contagion-tip">Tip: You cannot control their stress. You can choose what you absorb.</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ScenarioBar({ label, risk, description, color }) {
+  const risk100 = Math.min(100, Math.max(0, risk));
+  return (
+    <div className="scenario-bar-card">
+      <div className="scenario-bar-header">
+        <span className="scenario-label">{label}</span>
+        <span className="scenario-risk" style={{ color }}>{Math.round(risk100)}% risk</span>
+      </div>
+      <div className="scenario-bar-track">
+        <div className="scenario-bar-fill" style={{ width: `${risk100}%`, background: color }} />
+      </div>
+      <p className="scenario-desc">{description}</p>
+    </div>
+  );
+}
+
+function computeAlternateTimelines(entries) {
+  if (entries.length < 2) return null;
+  const recent = entries.slice(0, 7);
+  const avgBurnout = recent.reduce((sum, e) => sum + (e.analysis?.burnoutRiskScore || 45), 0) / recent.length;
+  const avgSleep = Number((recent.reduce((sum, e) => sum + Number(e.sleepHours || 6), 0) / recent.length).toFixed(1));
+  const avgStress = Number((recent.reduce((sum, e) => sum + Number(e.stress || 6), 0) / recent.length).toFixed(1));
+
+  const sleepDeficit = Math.max(0, 7.5 - avgSleep);
+  const stressLoad = Math.max(0, avgStress - 4);
+
+  const currentRisk = Math.min(100, avgBurnout);
+  const sleepImprovedRisk = Math.max(0, currentRisk - (sleepDeficit > 0.5 ? 22 : 8));
+  const balancedRisk = Math.max(0, currentRisk - (stressLoad > 2 ? 18 : 10));
+
+  const contagionKeywords = ['parent', 'peer', 'friend', 'batch', 'topper', 'teacher', 'compared', 'everyone', 'classmate', 'rank', 'others'];
+  const contagionSources = [];
+  entries.slice(0, 6).forEach((e) => {
+    [...(e.analysis?.stressTriggers || []), ...(e.analysis?.hiddenTriggers || [])].forEach((t) => {
+      const lower = String(t).toLowerCase();
+      if (contagionKeywords.some((k) => lower.includes(k))) {
+        contagionSources.push(t);
+      }
+    });
+  });
+
+  return { currentRisk, sleepImprovedRisk, balancedRisk, avgSleep, avgStress, contagionSources: [...new Set(contagionSources)].slice(0, 4) };
+}
+
+/* ─── Scan Section ────────────────────────────────────────────────────────── */
+
+function ScanSection() {
+  const [scanTab, setScanTab] = useState('desk');
+  const [analysis, setAnalysis] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const fileRef = useRef(null);
+  const videoRef = useRef(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const streamRef = useRef(null);
+
+  async function handleFile(file) {
+    if (!file) return;
+    setError('');
+    setAnalysis(null);
+    setLoading(true);
+    try {
+      const dataUrl = await compressImage(file);
+      const res = await fetch('/api/analyze-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageDataUrl: dataUrl, type: scanTab })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Analysis failed');
+      setAnalysis(data.analysis);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function startCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      streamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      setCameraActive(true);
+    } catch {
+      setError('Camera access denied. Please allow camera permission in your browser.');
+    }
+  }
+
+  async function captureCamera() {
+    const video = videoRef.current;
+    if (!video) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 480;
+    canvas.getContext('2d').drawImage(video, 0, 0, 640, 480);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+    stopCamera();
+    setAnalysis(null);
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/analyze-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageDataUrl: dataUrl, type: 'face' })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Analysis failed');
+      setAnalysis(data.analysis);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function stopCamera() {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    setCameraActive(false);
+  }
+
+  useEffect(() => () => stopCamera(), []);
+
+  const tabs = [
+    ['desk', 'Study Desk'],
+    ['handwriting', 'Handwriting'],
+    ['face', 'Face Check']
   ];
+
+  const tabDescriptions = {
+    desk: 'Upload a photo of your study desk. The AI reads your environment for stress signals — clutter, late-night setup, caffeine count.',
+    handwriting: 'Upload a sample of your handwriting. The AI observes pressure, speed, and clarity as gentle signals of your current state.',
+    face: 'Take a quick photo. The AI observes visible signs of tiredness or tension — just like a caring friend checking in on you.'
+  };
+
+  return (
+    <section className="scan-section">
+      <div className="section-heading">
+        <p className="eyebrow">Environment & Wellbeing Scan</p>
+        <h2>What your surroundings reveal</h2>
+      </div>
+      <nav className="relief-tabs" aria-label="Scan types">
+        {tabs.map(([id, label]) => (
+          <button key={id} type="button" className="relief-tab" data-active={scanTab === id}
+            onClick={() => { setScanTab(id); setAnalysis(null); setError(''); stopCamera(); }}>
+            {label}
+          </button>
+        ))}
+      </nav>
+      <p className="scan-desc">{tabDescriptions[scanTab]}</p>
+
+      {scanTab === 'face' ? (
+        <div className="scan-face">
+          {!cameraActive && !analysis && (
+            <button className="primary-button" type="button" onClick={startCamera}>
+              Enable camera
+            </button>
+          )}
+          <video
+            ref={videoRef}
+            className={`scan-video ${cameraActive ? '' : 'hidden'}`}
+            autoPlay
+            muted
+            playsInline
+          />
+          {cameraActive && (
+            <div className="scan-camera-controls">
+              <button className="primary-button" type="button" onClick={captureCamera}>Capture & analyse</button>
+              <button className="secondary-button" type="button" onClick={stopCamera}>Cancel</button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="scan-upload">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="hidden"
+            onChange={(e) => handleFile(e.target.files?.[0])}
+          />
+          <button className="primary-button" type="button" onClick={() => fileRef.current?.click()} disabled={loading}>
+            {loading ? 'Analysing...' : 'Upload photo'}
+          </button>
+        </div>
+      )}
+
+      {loading && <div className="scan-loading"><div className="loading-mark" /><p>Reading the signals...</p></div>}
+      {error && <p className="notice">{error}</p>}
+
+      {analysis && (
+        <div className="scan-results">
+          <p className="scan-summary">{analysis.summary}</p>
+          {analysis.stressSignals?.length > 0 && (
+            <div className="scan-block scan-stress">
+              <h4>Stress signals noticed</h4>
+              <ul>{analysis.stressSignals.map((s, i) => <li key={i}>{s}</li>)}</ul>
+            </div>
+          )}
+          {analysis.positiveSignals?.length > 0 && (
+            <div className="scan-block scan-positive">
+              <h4>Positive signals</h4>
+              <ul>{analysis.positiveSignals.map((s, i) => <li key={i}>{s}</li>)}</ul>
+            </div>
+          )}
+          {analysis.observations?.length > 0 && (
+            <div className="scan-block">
+              <h4>What I noticed</h4>
+              <ul>{analysis.observations.map((s, i) => <li key={i}>{s}</li>)}</ul>
+            </div>
+          )}
+          <div className="scan-block scan-tip">
+            <h4>One thing to try</h4>
+            <p>{analysis.suggestion}</p>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+async function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 768;
+        let w = img.width;
+        let h = img.height;
+        if (w > MAX || h > MAX) {
+          if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+          else { w = Math.round(w * MAX / h); h = MAX; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.78));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ─── Graph Map ───────────────────────────────────────────────────────────── */
+
+function buildGraph(entries) {
+  const nodes = [{
+    id: 'center', type: 'core', label: 'Journal', detail: `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`, radius: 32
+  }];
   const edges = [];
 
   entries.forEach((entry, entryIndex) => {
     const entryNodeId = `entry-${entry.id}`;
     nodes.push({
-      id: entryNodeId,
-      type: 'entry',
-      label: entry.exam || 'Journal entry',
+      id: entryNodeId, type: 'entry',
+      label: entry.exam || 'Entry',
       detail: `${formatDate(entry.createdAt)} · mood ${entry.mood} · ${entry.analysis?.stressLevel || 'new'}`,
-      radius: 23,
-      entryIndex,
+      radius: 24, entryIndex,
       mood: Number(entry.mood) || 5,
-      stressLevel: entry.analysis?.stressLevel || 'new'
+      stressLevel: entry.analysis?.stressLevel || 'new',
+      burnoutRisk: entry.analysis?.burnoutRiskScore || 40
     });
     edges.push({ from: 'center', to: entryNodeId, type: 'entry' });
 
     (entry.insightBubbles || []).forEach((bubble, bubbleIndex) => {
       const bubbleNodeId = `insight-${entry.id}-${bubble.id || bubbleIndex}`;
       nodes.push({
-        id: bubbleNodeId,
-        type: 'insight',
+        id: bubbleNodeId, type: 'insight',
         label: bubble.category || 'Insight',
         detail: bubble.text,
-        radius: 15,
-        entryIndex,
-        bubbleIndex,
+        radius: 15, entryIndex, bubbleIndex,
         accent: bubble.accent
       });
       edges.push({ from: entryNodeId, to: bubbleNodeId, type: 'insight' });
@@ -354,155 +910,197 @@ function GraphMapSection({ entries }) {
   const canvasRef = useRef(null);
   const panelRef = useRef(null);
   const renderedNodesRef = useRef([]);
+  const physicsRef = useRef({ positions: {}, velocities: {}, tick: 0 });
   const [hoveredNode, setHoveredNode] = useState(null);
   const graph = useMemo(() => buildGraph(entries), [entries]);
+
+  useEffect(() => {
+    physicsRef.current = { positions: {}, velocities: {}, tick: 0 };
+  }, [graph]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const panel = panelRef.current;
     if (!canvas || !panel) return undefined;
-    const context = canvas.getContext('2d');
-    let animationFrame = 0;
+    const ctx = canvas.getContext('2d');
+    let rafId = 0;
+    let lastTime = performance.now();
 
     function cssVar(name) {
       return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     }
 
-    function positionNodes(width, height) {
-      const center = { x: width / 2, y: height / 2 };
-      const entryNodes = graph.nodes.filter((node) => node.type === 'entry');
-      const rendered = graph.nodes.map((node) => ({ ...node, x: center.x, y: center.y }));
-      const byId = new Map(rendered.map((node) => [node.id, node]));
-      const ringRadius = Math.min(width, height) * (entryNodes.length > 3 ? 0.31 : 0.25);
+    function runPhysics(nodes, edges, width, height) {
+      const state = physicsRef.current;
+      const centerX = width / 2;
+      const centerY = height / 2;
 
-      entryNodes.forEach((node, index) => {
-        const angle = -Math.PI / 2 + (Math.PI * 2 * index) / Math.max(entryNodes.length, 1);
-        const wave = index % 2 === 0 ? 18 : -12;
-        const target = byId.get(node.id);
-        target.x = center.x + Math.cos(angle) * (ringRadius + wave);
-        target.y = center.y + Math.sin(angle) * (ringRadius + wave);
+      nodes.forEach((node) => {
+        if (!state.positions[node.id]) {
+          const angle = Math.random() * Math.PI * 2;
+          const r = 50 + Math.random() * 100;
+          state.positions[node.id] = { x: centerX + Math.cos(angle) * r, y: centerY + Math.sin(angle) * r };
+          state.velocities[node.id] = { x: (Math.random() - 0.5) * 2, y: (Math.random() - 0.5) * 2 };
+        }
+      });
 
-        const childNodes = rendered.filter((child) => child.type === 'insight' && child.entryIndex === node.entryIndex);
-        childNodes.forEach((child, childIndex) => {
-          const childAngle = angle + (childIndex - (childNodes.length - 1) / 2) * 0.38;
-          const childRadius = 84 + childIndex * 8;
-          child.x = target.x + Math.cos(childAngle) * childRadius;
-          child.y = target.y + Math.sin(childAngle) * childRadius;
+      const cooling = Math.max(0.1, 1 - state.tick / 220);
+      const forces = {};
+      nodes.forEach((n) => { forces[n.id] = { x: 0, y: 0 }; });
+
+      nodes.forEach((a) => {
+        const pa = state.positions[a.id];
+        forces[a.id].x += (centerX - pa.x) * 0.018 * cooling;
+        forces[a.id].y += (centerY - pa.y) * 0.018 * cooling;
+
+        nodes.forEach((b) => {
+          if (a.id >= b.id) return;
+          const pb = state.positions[b.id];
+          const dx = pa.x - pb.x;
+          const dy = pa.y - pb.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const repulse = (2200 / (dist * dist)) * cooling;
+          const fx = (dx / dist) * repulse;
+          const fy = (dy / dist) * repulse;
+          forces[a.id].x += fx;
+          forces[a.id].y += fy;
+          forces[b.id].x -= fx;
+          forces[b.id].y -= fy;
         });
       });
 
-      return rendered.map((node) => ({
-        ...node,
-        x: Math.max(node.radius + 18, Math.min(width - node.radius - 18, node.x)),
-        y: Math.max(node.radius + 18, Math.min(height - node.radius - 18, node.y))
-      }));
-    }
-
-    function wrapText(text, maxWidth) {
-      const words = String(text || '').split(/\s+/).filter(Boolean);
-      const lines = [];
-      let line = '';
-      words.forEach((word) => {
-        const next = line ? `${line} ${word}` : word;
-        if (context.measureText(next).width > maxWidth && line) {
-          lines.push(line);
-          line = word;
-        } else {
-          line = next;
-        }
+      edges.forEach((edge) => {
+        const pa = state.positions[edge.from];
+        const pb = state.positions[edge.to];
+        if (!pa || !pb) return;
+        const dx = pb.x - pa.x;
+        const dy = pb.y - pa.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const target = edge.type === 'entry' ? 155 : 82;
+        const spring = (dist - target) * 0.055 * cooling;
+        const fx = (dx / dist) * spring;
+        const fy = (dy / dist) * spring;
+        forces[edge.from].x += fx;
+        forces[edge.from].y += fy;
+        forces[edge.to].x -= fx;
+        forces[edge.to].y -= fy;
       });
-      if (line) lines.push(line);
-      return lines.slice(0, 2);
+
+      nodes.forEach((node) => {
+        const vel = state.velocities[node.id];
+        const pos = state.positions[node.id];
+        vel.x = (vel.x + forces[node.id].x) * 0.78;
+        vel.y = (vel.y + forces[node.id].y) * 0.78;
+        pos.x = Math.max(node.radius + 16, Math.min(width - node.radius - 16, pos.x + vel.x));
+        pos.y = Math.max(node.radius + 16, Math.min(height - node.radius - 16, pos.y + vel.y));
+      });
+
+      if (state.tick < 400) state.tick++;
     }
 
-    function draw() {
+    function draw(now) {
       const rect = panel.getBoundingClientRect();
-      const pixelRatio = window.devicePixelRatio || 1;
+      const dpr = window.devicePixelRatio || 1;
       const width = Math.max(320, rect.width);
       const height = Math.max(420, rect.height);
-      canvas.width = Math.round(width * pixelRatio);
-      canvas.height = Math.round(height * pixelRatio);
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
-      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      context.clearRect(0, 0, width, height);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
 
       const colors = {
-        panel: cssVar('--panel') || '#ffffff',
         ink: cssVar('--ink') || '#25211d',
         muted: cssVar('--muted') || '#726b62',
         line: cssVar('--line') || '#d8cabc',
         brand: cssVar('--brand') || '#2f6f73',
-        accent: cssVar('--accent') || '#e45d4f',
-        gold: cssVar('--gold') || '#d89b2b',
-        green: cssVar('--green') || '#4b8f63'
+        panel: cssVar('--panel') || '#ffffff'
       };
 
-      const rendered = positionNodes(width, height);
-      const byId = new Map(rendered.map((node) => [node.id, node]));
+      const t = (now / 1000) % (Math.PI * 2);
+
+      runPhysics(graph.nodes, graph.edges, width, height);
+      const state = physicsRef.current;
+
+      const rendered = graph.nodes.map((node) => ({
+        ...node,
+        x: state.positions[node.id]?.x || width / 2,
+        y: state.positions[node.id]?.y || height / 2
+      }));
+      const byId = new Map(rendered.map((n) => [n.id, n]));
       renderedNodesRef.current = rendered;
 
-      context.save();
-      context.lineCap = 'round';
+      ctx.save();
+      ctx.lineCap = 'round';
       graph.edges.forEach((edge) => {
         const from = byId.get(edge.from);
         const to = byId.get(edge.to);
         if (!from || !to) return;
-        context.beginPath();
-        context.moveTo(from.x, from.y);
-        context.lineTo(to.x, to.y);
-        context.strokeStyle = edge.type === 'insight' ? colors.line : colors.brand;
-        context.globalAlpha = edge.type === 'insight' ? 0.55 : 0.72;
-        context.lineWidth = edge.type === 'insight' ? 1.5 : 2.5;
-        context.stroke();
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.strokeStyle = edge.type === 'insight' ? colors.line : colors.brand;
+        ctx.globalAlpha = edge.type === 'insight' ? 0.45 : 0.65;
+        ctx.lineWidth = edge.type === 'insight' ? 1.2 : 2;
+        ctx.stroke();
       });
-      context.restore();
+      ctx.restore();
 
       rendered.forEach((node) => {
         const isHovered = hoveredNode?.id === node.id;
-        const fill = node.type === 'core'
-          ? colors.ink
-          : node.type === 'entry'
-            ? colors.panel
-            : node.accent || colors.gold;
-        const stroke = node.type === 'core' ? colors.ink : node.type === 'entry' ? colors.brand : colors.ink;
+        const pulse = node.type === 'entry' && node.burnoutRisk > 60 ? 2 + Math.sin(t * 2.2) * 2.5 : 0;
 
-        context.save();
-        context.beginPath();
-        context.arc(node.x, node.y, node.radius + (isHovered ? 5 : 0), 0, Math.PI * 2);
-        context.fillStyle = fill;
-        context.shadowColor = 'rgba(37, 33, 29, 0.18)';
-        context.shadowBlur = isHovered ? 24 : 14;
-        context.shadowOffsetY = 8;
-        context.fill();
-        context.shadowColor = 'transparent';
-        context.lineWidth = node.type === 'insight' ? 3 : 2;
-        context.strokeStyle = stroke;
-        context.stroke();
+        if (pulse > 0) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, node.radius + pulse + 6, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(228, 93, 79, 0.14)';
+          ctx.fill();
+          ctx.restore();
+        }
 
-        context.fillStyle = node.type === 'core' || node.type === 'insight' ? '#fffdf8' : colors.ink;
-        context.textAlign = 'center';
-        context.textBaseline = 'middle';
-        context.font = node.type === 'insight' ? '700 11px Inter, sans-serif' : '800 12px Inter, sans-serif';
-        const label = node.type === 'insight' ? node.label.slice(0, 1) : node.label;
-        const lines = node.type === 'insight' ? [label] : wrapText(label, node.radius * 2.4);
-        lines.forEach((line, index) => {
-          context.fillText(line, node.x, node.y + (index - (lines.length - 1) / 2) * 13);
-        });
-        context.restore();
+        const fill = node.type === 'core' ? colors.ink : node.type === 'entry' ? moodToColor(node.mood) : (node.accent || '#d89b2b');
+        const strokeColor = node.type === 'core' ? colors.ink : node.type === 'entry' ? colors.ink : colors.ink;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, node.radius + (isHovered ? 4 : 0), 0, Math.PI * 2);
+        ctx.fillStyle = fill;
+        ctx.shadowColor = isHovered ? fill : 'rgba(37,33,29,0.16)';
+        ctx.shadowBlur = isHovered ? 20 : 10;
+        ctx.shadowOffsetY = 4;
+        ctx.fill();
+        ctx.shadowColor = 'transparent';
+        ctx.lineWidth = node.type === 'insight' ? 2 : 1.5;
+        ctx.strokeStyle = strokeColor;
+        ctx.globalAlpha = 0.3;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        ctx.fillStyle = node.type === 'core' ? '#fffdf8' : node.type === 'entry' ? '#fffdf8' : '#fffdf8';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = node.type === 'insight' ? '700 9px Inter,sans-serif' : '700 10px Inter,sans-serif';
+        const labelText = node.type === 'insight' ? node.label.slice(0, 1) : node.label.slice(0, 10);
+        ctx.fillText(labelText, node.x, node.y);
+        ctx.restore();
       });
+
+      lastTime = now;
+      rafId = requestAnimationFrame(draw);
     }
 
-    function scheduleDraw() {
-      cancelAnimationFrame(animationFrame);
-      animationFrame = requestAnimationFrame(draw);
-    }
-
-    const observer = new ResizeObserver(scheduleDraw);
+    const observer = new ResizeObserver(() => {
+      physicsRef.current.tick = Math.min(physicsRef.current.tick, 50);
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(draw);
+    });
     observer.observe(panel);
-    scheduleDraw();
+    rafId = requestAnimationFrame(draw);
+
     return () => {
-      cancelAnimationFrame(animationFrame);
+      cancelAnimationFrame(rafId);
       observer.disconnect();
     };
   }, [graph, hoveredNode]);
@@ -511,10 +1109,7 @@ function GraphMapSection({ entries }) {
     const rect = canvasRef.current.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    const nearest = renderedNodesRef.current.find((node) => {
-      const distance = Math.hypot(node.x - x, node.y - y);
-      return distance <= node.radius + 8;
-    });
+    const nearest = renderedNodesRef.current.find((n) => Math.hypot(n.x - x, n.y - y) <= n.radius + 8);
     setHoveredNode(nearest || null);
   }
 
@@ -526,8 +1121,10 @@ function GraphMapSection({ entries }) {
           <h2>Trace the shape of your journal</h2>
         </div>
         <div className="graph-legend" aria-label="Graph legend">
-          <span><i className="legend-core" />History</span>
-          <span><i className="legend-entry" />Entry</span>
+          <span><i className="legend-core" />Core</span>
+          <span><i className="legend-entry-low" />Low mood</span>
+          <span><i className="legend-entry-mid" />Mid mood</span>
+          <span><i className="legend-entry-high" />High mood</span>
           <span><i className="legend-insight" />Insight</span>
         </div>
       </div>
@@ -541,7 +1138,7 @@ function GraphMapSection({ entries }) {
         />
         {!entries.length && (
           <div className="graph-empty">
-            <EmptyState title="No graph yet" text="Save a journal entry and this canvas will map its mood, stress signal, and generated suggestions." />
+            <EmptyState title="No graph yet" text="Save a journal entry and this canvas will map your mood, stress signals, and insight connections." />
           </div>
         )}
         {hoveredNode && (
@@ -554,6 +1151,8 @@ function GraphMapSection({ entries }) {
     </section>
   );
 }
+
+/* ─── Auth Screens ────────────────────────────────────────────────────────── */
 
 function LoadingScreen() {
   return <div className="auth-frame"><div className="loading-mark" /><p>Loading MindTrail...</p></div>;
@@ -603,16 +1202,9 @@ function AuthScreen({ clerkEnabled, onTesterReady }) {
 
 function TesterProfileMenu({ onSignOut, loading }) {
   const [open, setOpen] = useState(false);
-
   return (
     <div className="tester-profile">
-      <button
-        className="tester-avatar-button"
-        type="button"
-        aria-expanded={open}
-        aria-label="Tester profile"
-        onClick={() => setOpen((current) => !current)}
-      >
+      <button className="tester-avatar-button" type="button" aria-expanded={open} aria-label="Tester profile" onClick={() => setOpen((c) => !c)}>
         <span className="tester-avatar">T</span>
       </button>
       {open && (
@@ -640,18 +1232,63 @@ function OnboardingCard({ name, onDone }) {
       <div>
         <p className="eyebrow">First run</p>
         <h2>Welcome, {name}</h2>
-        <p>Start with one honest entry. The companion will use your full journal history server-side, and each entry can grow its own cluster of insight bubbles.</p>
+        <p>Start with one honest journal entry. The companion will ask questions to understand you — not lecture you. Relief Room has tools that actually help when studying gets overwhelming.</p>
       </div>
       <button className="primary-button" type="button" onClick={onDone}>Begin</button>
     </section>
   );
 }
 
-function Stat({ label, value }) {
-  return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
+function Stat({ label, value, highlight }) {
+  return (
+    <div className="stat" data-highlight={highlight}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+/* ─── Journal Section ─────────────────────────────────────────────────────── */
+
+function useVoiceJournal(onTranscript) {
+  const [listening, setListening] = useState(false);
+  const recRef = useRef(null);
+  const supported = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
+
+  function start() {
+    if (!supported) return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new SR();
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.lang = 'en-IN';
+    rec.onresult = (e) => {
+      let text = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) text += e.results[i][0].transcript + ' ';
+      }
+      if (text.trim()) onTranscript(text.trim());
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recRef.current = rec;
+    rec.start();
+    setListening(true);
+  }
+
+  function stop() {
+    recRef.current?.stop();
+    setListening(false);
+  }
+
+  return { listening, start, stop, supported };
 }
 
 function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }) {
+  const { listening, start, stop, supported } = useVoiceJournal((text) => {
+    onUpdate('journal', (form.journal ? form.journal + ' ' : '') + text);
+  });
+
   return (
     <section className="journal-layout">
       <form className="journal-composer" onSubmit={onSubmit}>
@@ -665,8 +1302,30 @@ function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }
           <Range label="Energy" value={form.energy} onChange={(v) => onUpdate('energy', v)} />
           <Range label="Sleep" min={0} max={16} step={0.5} suffix="h" value={form.sleepHours} onChange={(v) => onUpdate('sleepHours', v)} />
         </div>
-        <textarea className="input journal-textarea" value={form.journal} onChange={(e) => onUpdate('journal', e.target.value)} placeholder="What happened, what kept looping in your head, what helped, what felt heavy?" minLength={30} maxLength={4000} required />
-        <button className="primary-button" type="submit" disabled={loading === 'entry'}>{loading === 'entry' ? 'Analyzing...' : 'Save journal entry'}</button>
+        <div className="journal-textarea-wrap">
+          <textarea
+            className="input journal-textarea"
+            value={form.journal}
+            onChange={(e) => onUpdate('journal', e.target.value)}
+            placeholder="What happened, what kept looping in your head, what helped, what felt heavy?"
+            minLength={30}
+            maxLength={4000}
+            required
+          />
+          {supported && (
+            <button
+              type="button"
+              className={`voice-btn ${listening ? 'voice-btn-active' : ''}`}
+              onClick={listening ? stop : start}
+              title={listening ? 'Stop voice input' : 'Start voice input'}
+              aria-label={listening ? 'Stop dictation' : 'Dictate journal entry'}
+            >
+              {listening ? '⏹' : '🎙'}
+            </button>
+          )}
+        </div>
+        {listening && <p className="voice-hint">Listening... speak naturally. Click ⏹ to stop.</p>}
+        <button className="primary-button" type="submit" disabled={loading === 'entry'}>{loading === 'entry' ? 'Analysing...' : 'Save journal entry'}</button>
       </form>
 
       <div className="entry-stack">
@@ -680,10 +1339,18 @@ function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }
               </div>
               <h3>{entry.exam}</h3>
               <p>{entry.analysis?.summary}</p>
+              {entry.analysis?.followUpQuestion && (
+                <p className="follow-up-q">💬 {entry.analysis.followUpQuestion}</p>
+              )}
               <div className="entry-numbers">
                 <span>Mood {entry.mood}</span>
                 <span>Energy {entry.energy}</span>
                 <span>Sleep {entry.sleepHours}h</span>
+                {entry.analysis?.burnoutRiskScore !== undefined && (
+                  <span className={entry.analysis.burnoutRiskScore > 60 ? 'tone-high' : ''}>
+                    Burnout risk {Math.round(entry.analysis.burnoutRiskScore)}%
+                  </span>
+                )}
               </div>
               <button className="invoke-button" type="button" onClick={() => onInvoke(entry.id)} disabled={loading === `insights-${entry.id}`}>
                 {loading === `insights-${entry.id}` ? 'Invoking...' : 'Invoke Suggestions'}
@@ -702,7 +1369,7 @@ function Range({ label, value, onChange, min = 1, max = 10, step = 1, suffix = '
     <label className="range-field">
       <span>{label}</span>
       <strong>{value}{suffix}</strong>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
     </label>
   );
 }
@@ -721,28 +1388,38 @@ function BubbleMasonry({ bubbles }) {
   );
 }
 
+/* ─── Chat Section ────────────────────────────────────────────────────────── */
+
 function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit }) {
   return (
     <section className="chat-panel">
       <div className="section-heading">
         <p className="eyebrow">Companion</p>
-        <h2>Chat with your full journal context</h2>
+        <h2>Talk it through</h2>
+        <p className="section-subtext muted">This companion asks questions and tries to understand you — not lecture you. Tell it what&apos;s going on.</p>
       </div>
       <div className="chat-feed">
-        {!chatLog.length && <EmptyState title="Ask anything study-season related" text="The server adds your complete available journal history to each companion response." />}
+        {!chatLog.length && (
+          <EmptyState
+            title="Just say what's on your mind"
+            text="Your companion won't give you a list of tips. It'll ask questions, reflect back what you said, and try to actually understand what you're going through."
+          />
+        )}
         {chatLog.map((message, index) => (
           <div className={`chat-line ${message.role}`} key={`${message.role}-${index}`}>{message.content}</div>
         ))}
-        {loading && <div className="chat-line companion">Thinking...</div>}
+        {loading && <div className="chat-line companion thinking-dots"><span /><span /><span /></div>}
         <div ref={chatEndRef} />
       </div>
       <form className="chat-form" onSubmit={onSubmit}>
-        <input className="input" value={chatText} onChange={(event) => onText(event.target.value)} placeholder="Ask for perspective, a plan, or a calmer next step" maxLength={1200} />
+        <input className="input" value={chatText} onChange={(e) => onText(e.target.value)} placeholder="What's actually going on right now?" maxLength={1200} />
         <button className="primary-button" type="submit" disabled={loading}>Send</button>
       </form>
     </section>
   );
 }
+
+/* ─── Guestbook ───────────────────────────────────────────────────────────── */
 
 function GuestbookSection({ posts, form, loading, onForm, onSubmit }) {
   return (
@@ -752,8 +1429,8 @@ function GuestbookSection({ posts, form, loading, onForm, onSubmit }) {
           <p className="eyebrow">Shared wall</p>
           <h2>Leave a handwritten note</h2>
         </div>
-        <input className="input" value={form.authorName} onChange={(event) => onForm({ ...form, authorName: event.target.value })} placeholder="Name" maxLength={32} required />
-        <textarea className="input" value={form.message} onChange={(event) => onForm({ ...form, message: event.target.value })} placeholder="Write whatever you want to leave behind" maxLength={280} required />
+        <input className="input" value={form.authorName} onChange={(e) => onForm({ ...form, authorName: e.target.value })} placeholder="Name" maxLength={32} required />
+        <textarea className="input" value={form.message} onChange={(e) => onForm({ ...form, message: e.target.value })} placeholder="Write whatever you want to leave behind" maxLength={280} required />
         <button className="primary-button" type="submit" disabled={loading}>{loading ? 'Posting...' : 'Pin note'}</button>
       </form>
       <div className="guestbook-wall">
@@ -762,13 +1439,7 @@ function GuestbookSection({ posts, form, loading, onForm, onSubmit }) {
           <article
             className="guest-note"
             key={post.id}
-            style={{
-              '--rotate': `${post.rotation}deg`,
-              '--scale': post.scale,
-              '--x': `${post.xOffset}px`,
-              '--y': `${post.yOffset}px`,
-              '--note': post.color
-            }}
+            style={{ '--rotate': `${post.rotation}deg`, '--scale': post.scale, '--x': `${post.xOffset}px`, '--y': `${post.yOffset}px`, '--note': post.color }}
           >
             <p>{post.message}</p>
             <span>{post.authorName}</span>

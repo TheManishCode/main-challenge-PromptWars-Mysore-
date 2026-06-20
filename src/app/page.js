@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SignInButton, SignUpButton, UserButton, useClerk, useUser } from '@clerk/nextjs';
+import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/nextjs';
 
 const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
@@ -36,7 +36,6 @@ export default function Home() {
 
 function AuthenticatedApp() {
   const { isLoaded, isSignedIn, user } = useUser();
-  const { signOut } = useClerk();
   const [testerMode, setTesterMode] = useState(false);
   const [section, setSection] = useState('journal');
   const [theme, setTheme] = useState('light');
@@ -193,30 +192,6 @@ function AuthenticatedApp() {
     }
   }
 
-  async function handleSignOut() {
-    setLoading('signout');
-    setError('');
-    try {
-      if (testerMode) {
-        await fetch('/api/tester', { method: 'DELETE' });
-        setTesterMode(false);
-      }
-      if (isSignedIn) {
-        await signOut();
-      }
-      setEntries([]);
-      setGuestbook([]);
-      setChatLog([]);
-      setForm(INITIAL_FORM);
-      setGuestForm({ authorName: '', message: '' });
-      setSection('journal');
-    } catch (err) {
-      setError(err.message || 'Unable to sign out');
-    } finally {
-      setLoading('');
-    }
-  }
-
   if (!isLoaded) return <LoadingScreen />;
   if (!isSignedIn && !testerMode) return <AuthScreen onTesterReady={() => setTesterMode(true)} />;
 
@@ -231,10 +206,7 @@ function AuthenticatedApp() {
           <button className="icon-button" type="button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} title="Toggle theme">
             {theme === 'light' ? 'Dark' : 'Light'}
           </button>
-          {isSignedIn ? <UserButton /> : <span className="tester-badge">Tester</span>}
-          <button className="secondary-button" type="button" onClick={handleSignOut} disabled={loading === 'signout'}>
-            {loading === 'signout' ? 'Signing out...' : 'Sign out'}
-          </button>
+          {isSignedIn && <UserButton />}
         </div>
       </header>
 

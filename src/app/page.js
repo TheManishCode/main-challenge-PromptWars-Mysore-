@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SignInButton, SignUpButton, UserButton, useSignIn, useUser } from '@clerk/nextjs';
+import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/nextjs';
 
 const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
@@ -30,12 +30,26 @@ function stressClass(level) {
 }
 
 export default function Home() {
-  if (!hasClerk) return <AuthSetupRequired />;
-  return <AuthenticatedApp />;
+  if (!hasClerk) {
+    return (
+      <AuthenticatedApp
+        auth={{ isLoaded: true, isSignedIn: false, user: null }}
+        clerkEnabled={false}
+      />
+    );
+  }
+
+  return <ClerkAuthenticatedApp />;
 }
 
-function AuthenticatedApp() {
+function ClerkAuthenticatedApp() {
   const { isLoaded, isSignedIn, user } = useUser();
+  return <AuthenticatedApp auth={{ isLoaded, isSignedIn, user }} clerkEnabled />;
+}
+
+function AuthenticatedApp({ auth, clerkEnabled }) {
+  const { isLoaded, isSignedIn, user } = auth;
+  const [testerMode, setTesterMode] = useState(false);
   const [section, setSection] = useState('journal');
   const [theme, setTheme] = useState('light');
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -67,9 +81,20 @@ function AuthenticatedApp() {
     setGuestbook(data.posts || []);
   }, []);
 
+  const hasAppAccess = isSignedIn || testerMode;
+
   useEffect(() => {
-    if (!isSignedIn) return;
-    const seenKey = `mindtrail-onboarding-${user?.id}`;
+    if (!isLoaded || isSignedIn || testerMode) return;
+    fetch('/api/entries')
+      .then((res) => {
+        if (res.ok) setTesterMode(true);
+      })
+      .catch(() => {});
+  }, [isLoaded, isSignedIn, testerMode]);
+
+  useEffect(() => {
+    if (!hasAppAccess) return;
+    const seenKey = `mindtrail-onboarding-${user?.id || 'tester'}`;
     Promise.resolve()
       .then(() => {
         setShowOnboarding(!localStorage.getItem(seenKey));
@@ -77,7 +102,7 @@ function AuthenticatedApp() {
         return Promise.all([loadEntries(), loadGuestbook()]);
       })
       .catch((err) => setError(err.message));
-  }, [isSignedIn, loadEntries, loadGuestbook, user?.id]);
+  }, [hasAppAccess, loadEntries, loadGuestbook, user?.id]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -90,7 +115,7 @@ function AuthenticatedApp() {
   }, [entries]);
 
   function finishOnboarding() {
-    if (user?.id) localStorage.setItem(`mindtrail-onboarding-${user.id}`, 'true');
+    localStorage.setItem(`mindtrail-onboarding-${user?.id || 'tester'}`, 'true');
     setShowOnboarding(false);
   }
 
@@ -182,8 +207,29 @@ function AuthenticatedApp() {
     }
   }
 
+  async function handleTesterSignOut() {
+    setLoading('signout');
+    setError('');
+    try {
+      const res = await fetch('/api/tester', { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Unable to sign out');
+      setTesterMode(false);
+      setEntries([]);
+      setGuestbook([]);
+      setChatLog([]);
+      setForm(INITIAL_FORM);
+      setGuestForm({ authorName: '', message: '' });
+      setSection('journal');
+    } catch (err) {
+      setError(err.message || 'Unable to sign out');
+    } finally {
+      setLoading('');
+    }
+  }
+
   if (!isLoaded) return <LoadingScreen />;
-  if (!isSignedIn) return <AuthScreen />;
+  if (!hasAppAccess) return <AuthScreen clerkEnabled={clerkEnabled} onTesterReady={() => setTesterMode(true)} />;
 
   return (
     <main className="product-shell">
@@ -196,11 +242,11 @@ function AuthenticatedApp() {
           <button className="icon-button" type="button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} title="Toggle theme">
             {theme === 'light' ? 'Dark' : 'Light'}
           </button>
-          {isSignedIn && <UserButton />}
+          {isSignedIn ? <UserButton /> : <TesterProfileMenu onSignOut={handleTesterSignOut} loading={loading === 'signout'} />}
         </div>
       </header>
 
-      {showOnboarding && <OnboardingCard name={user?.firstName || 'there'} onDone={finishOnboarding} />}
+      {showOnboarding && <OnboardingCard name={user?.firstName || (testerMode ? 'Tester' : 'there')} onDone={finishOnboarding} />}
 
       <section className="status-strip" aria-label="Journal summary">
         <Stat label="Entries" value={metrics.count} />
@@ -261,42 +307,18 @@ function LoadingScreen() {
   return <div className="auth-frame"><div className="loading-mark" /><p>Loading MindTrail...</p></div>;
 }
 
-function AuthSetupRequired() {
-  return (
-    <div className="auth-frame">
-      <div className="auth-panel">
-        <p className="eyebrow">Authentication required</p>
-        <h1>Connect Clerk before app access</h1>
-        <p>MindTrail no longer supports guest mode. Add `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` to enable email/password or OAuth sign in.</p>
-      </div>
-    </div>
-  );
-}
-
-function AuthScreen() {
-  const { isLoaded, signIn, setActive } = useSignIn();
+function AuthScreen({ clerkEnabled, onTesterReady }) {
   const [testerLoading, setTesterLoading] = useState(false);
   const [testerError, setTesterError] = useState('');
 
   async function signInTester() {
-    if (!isLoaded) return;
     setTesterLoading(true);
     setTesterError('');
     try {
       const res = await fetch('/api/tester', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Tester login failed');
-
-      const result = await signIn.create({
-        strategy: 'ticket',
-        ticket: data.ticket
-      });
-
-      if (result.status !== 'complete' || !result.createdSessionId) {
-        throw new Error('Tester Clerk session could not be completed');
-      }
-
-      await setActive({ session: result.createdSessionId });
+      onTesterReady();
     } catch (err) {
       setTesterError(err.message || 'Tester login failed');
     } finally {
@@ -311,14 +333,51 @@ function AuthScreen() {
         <h1>Sign in to enter MindTrail</h1>
         <p>Your companion, journal history, AI insight bubbles, and guestbook identity all live behind your account.</p>
         <div className="auth-actions">
-          <button className="primary-button" type="button" onClick={signInTester} disabled={!isLoaded || testerLoading}>
+          <button className="primary-button" type="button" onClick={signInTester} disabled={testerLoading}>
             {testerLoading ? 'Entering...' : 'Tester login'}
           </button>
-          <SignInButton mode="modal"><button className="primary-button" type="button">Log in</button></SignInButton>
-          <SignUpButton mode="modal"><button className="secondary-button" type="button">Create account</button></SignUpButton>
+          {clerkEnabled && (
+            <>
+              <SignInButton mode="modal"><button className="primary-button" type="button">Log in</button></SignInButton>
+              <SignUpButton mode="modal"><button className="secondary-button" type="button">Create account</button></SignUpButton>
+            </>
+          )}
         </div>
         {testerError && <p className="auth-error">{testerError}</p>}
       </section>
+    </div>
+  );
+}
+
+function TesterProfileMenu({ onSignOut, loading }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="tester-profile">
+      <button
+        className="tester-avatar-button"
+        type="button"
+        aria-expanded={open}
+        aria-label="Tester profile"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="tester-avatar">T</span>
+      </button>
+      {open && (
+        <div className="tester-menu" role="menu">
+          <div className="tester-menu-header">
+            <span className="tester-avatar tester-avatar-large">T</span>
+            <div>
+              <p className="tester-menu-name">Tester Session</p>
+              <p className="tester-menu-email">Local evaluator access</p>
+            </div>
+          </div>
+          <span className="tester-menu-badge">Signed app session</span>
+          <button className="tester-menu-action" type="button" role="menuitem" onClick={onSignOut} disabled={loading}>
+            {loading ? 'Signing out...' : 'Sign out'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

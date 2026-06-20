@@ -13,10 +13,10 @@ The current product direction is a private journal plus AI companion: authentica
 - Next.js 16 App Router project under `main_challenge/`.
 - Vercel config present in `vercel.json` (Mumbai region `bom1`, 30-second function timeout, cron at 02:00 UTC).
 - Auth-first product shell in `src/app/page.js`: users must sign up/log in or use the tester login before app access.
-- Auth screen includes a tester login button that requests a short-lived Clerk sign-in token from `POST /api/tester`; no credentials are exposed in the frontend.
+- Auth screen includes a tester login button that creates a signed HttpOnly app session through `POST /api/tester`; no credentials are exposed in the frontend and tester mode does not depend on Clerk.
 - Clerk is the primary auth provider. `src/app/layout.js` conditionally mounts `ClerkProvider`; `src/proxy.js` provides Clerk request context while API authorization is enforced in `getActor()`.
-- `getActor()` requires a Clerk session and returns hashed `storageKey`/`sessionKey` values.
-- If Clerk env vars are missing, the page shows an authentication setup screen instead of granting access.
+- `getActor()` accepts either a Clerk session or a signed tester session and returns hashed `storageKey`/`sessionKey` values.
+- If Clerk env vars are missing, tester login remains available while Clerk sign-in/sign-up controls are hidden.
 - Gemini integration is server-side only through Vercel AI SDK and `@ai-sdk/google` in `src/lib/gemini.js`.
 - Persistence uses Postgres through `DATABASE_URL` in production. The schema auto-initializes on first DB connection.
 - Local development without `DATABASE_URL` uses in-memory adapters, but API access still requires Clerk auth.
@@ -28,8 +28,8 @@ The current product direction is a private journal plus AI companion: authentica
 
 ## Product Surface
 
-- Auth: Clerk sign-in/sign-up first screen, tester login, plus first-run onboarding.
-- Tester login: one-click Clerk ticket sign-in for the configured evaluator account, so Clerk's normal user/profile bubble is available.
+- Auth: Clerk sign-in/sign-up first screen when configured, standalone tester login, plus first-run onboarding.
+- Tester login: one-click signed app session with a clearly labeled tester profile popover and sign-out control; it is intentionally independent of Clerk.
 - Journal: mood, energy, sleep, exam focus, encrypted journal entry, Gemini analysis summary, and history.
 - Invoke Suggestions: `POST /api/entries/[id]/insights` generates saved speech-bubble insight cards for one journal entry.
 - Insight taxonomy: `Mood`, `Pattern`, `Suggestion`, `Highlight`, each with a fixed accent color.
@@ -56,8 +56,9 @@ Postgres tables created in `src/lib/db.js`:
 | `DATABASE_URL` | Production | Postgres persistence |
 | `APP_ORIGIN` | Production | Same-origin write protection |
 | `DATA_ENCRYPTION_KEY` | Production | AES-256-GCM journal encryption |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Always for app access | Clerk auth |
-| `CLERK_SECRET_KEY` | Always for API access | Clerk auth |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Production user auth | Clerk auth |
+| `CLERK_SECRET_KEY` | Production user auth | Clerk auth |
+| `TESTER_LOGIN_SECRET` | Production tester access | Signs the tester session cookie |
 | `UPSTASH_REDIS_REST_URL` | Production | Rate limiting |
 | `UPSTASH_REDIS_REST_TOKEN` | Production | Rate limiting |
 | `CRON_SECRET` | Production | Cron job auth |
@@ -107,6 +108,7 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - `api/guestbook/route.js`: New shared authenticated guestbook API.
 - `api/chat/route.js`: Now stores chat messages and sends complete available journal history to Gemini.
 - `page.js`: Complete product rebuild with auth setup state, onboarding, journal, chat, guestbook, and theme toggle.
-- `page.js`: Auth screen includes tester login button that activates a real Clerk session through `useSignIn`.
+- `page.js`: Auth screen includes tester login button that creates a standalone tester session, plus a tester profile menu with sign-out.
+- `api/tester/route.js`: Creates and clears a signed HttpOnly tester session cookie.
 - `globals.css`: Complete visual redesign with light/dark tokens, masonry insight bubbles, and handwritten guestbook wall.
-- Removed `components/TesterButton.js`, `lib/session.js`, and the signed tester-cookie helper; `api/tester/route.js` now issues a short-lived Clerk sign-in token.
+- `lib/tester-session.js`: Signs and verifies standalone tester sessions without storing evaluator credentials or calling Clerk.

@@ -74,7 +74,7 @@ ${message}
 
 Respond with 3 concise paragraphs maximum. Stay empathetic and actionable.`,
     temperature: 0.5,
-    maxOutputTokens: 650
+    maxTokens: 650
   });
 
   return result.text;

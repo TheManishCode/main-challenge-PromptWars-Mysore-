@@ -10,59 +10,81 @@ The solution must analyze open-ended daily journaling and mood logs to uncover h
 
 ## Current Implementation
 
-- Next.js app router project under `main_challenge/`.
-- Vercel config present in `vercel.json`.
-- Gemini integration is server-side only through Vercel AI SDK and `@ai-sdk/google` in `src/lib/gemini.js`.
+- Next.js 16 App Router project under `main_challenge/`.
+- Vercel config present in `vercel.json` (Mumbai region `bom1`, 30-second function timeout, cron at 02:00 UTC).
+- Gemini integration is server-side only through Vercel AI SDK and `@ai-sdk/google` in `src/lib/gemini.js`. Uses `generateObject` with a Zod schema for structured journal analysis; `generateText` for companion chat.
 - Journal analysis API: `POST /api/entries`, `GET /api/entries`.
 - Companion chat API: `POST /api/chat`.
-- Persistence layer uses Postgres through `DATABASE_URL` in production.
-- Journal text is encrypted with AES-256-GCM before storage.
-- Local development without `DATABASE_URL` uses in-memory storage only and does not seed mock data.
-- Production authentication uses Clerk when its environment variables are present; local development can use HttpOnly anonymous dev sessions.
-- Every stored wellness entry records a hashed user key and hashed login session key so logs remain scoped to the signed-in Clerk identity and active session without storing raw session ids.
-- Input validation uses Zod schemas.
-- Safety layer detects crisis language before ordinary model calls.
-- Security layer includes same-origin write checks and Upstash-backed production rate limiting.
-- Vercel Cron hook exists at `/api/cron/patterns`.
+- Persistence layer uses Postgres through `DATABASE_URL` in production; schema auto-initializes on first connection.
+- Journal text is encrypted with AES-256-GCM before storage (`src/lib/crypto.js`).
+- Local development without `DATABASE_URL` uses in-memory `Map` only and does not seed mock data.
+- Production authentication uses Clerk (`src/proxy.js` proxy middleware + `ClerkProvider` in layout) when Clerk env vars are present.
+- `auth()` from Clerk returns both `userId` (stable across logins) and `sessionId` (unique per sign-in). `storageKey = SHA256(userId)`; `sessionKey = SHA256(sessionId)`.
+- Local development falls back to anonymous HttpOnly dev sessions managed by `src/lib/session.js`; session hash uses HMAC-SHA256 keyed with `SESSION_SECRET`.
+- Input validation uses Zod schemas (`src/lib/validation.js`).
+- Safety layer detects crisis language before ordinary model calls; escalates to KIRAN helpline 1800-599-0019 (`src/lib/safety.js`).
+- Security layer includes same-origin write checks and Upstash-backed production rate limiting (`src/lib/security.js`).
+- Vercel Cron hook exists at `/api/cron/patterns` (runs at 02:00 UTC daily).
+
+## Session Architecture
+
+### With Clerk (when CLERK_SECRET_KEY + NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY are present)
+- `storageKey = SHA256(userId)` — wellness history persists across all the user's logins.
+- `sessionKey = SHA256(sessionId)` — tracks the specific login session for audit purposes.
+- Each user sees only their own data; no cross-user leakage.
+- Google and GitHub OAuth are configured in the **Clerk dashboard** Social Connections — not via app env vars.
+
+### Without Clerk (local dev fallback)
+- Anonymous HttpOnly cookie (`mindtrail_session`) is issued on first visit via `src/lib/session.js`.
+- `storageKey = HMAC-SHA256(SESSION_SECRET, cookieId)` — scoped to the browser session.
+- No login required — any evaluator can visit `http://localhost:3001` and use all features immediately.
+- In-memory `Map` is used for storage when `DATABASE_URL` is absent.
 
 ## Required Environment
 
-- `GEMINI_API_KEY`: required for AI journal analysis and companion chat.
-- `DATABASE_URL`: required in production for persistence.
-- `APP_ORIGIN`: required in production for same-origin write protection.
-- `DATA_ENCRYPTION_KEY`: required in production for journal encryption.
-- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`: required in production for authentication.
-- `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`: required in production for rate limiting.
-- `CRON_SECRET`: required in production for cron authorization.
-- `SESSION_SECRET`: optional local/import secret for session-adjacent integrations; Clerk remains the production session authority.
-- `SESSION_COOKIE_NAME`: optional, defaults to `mindtrail_session`.
-- `GEMINI_MODEL`: optional, defaults to `gemini-2.5-flash`.
+| Variable | Required | Purpose |
+|---|---|---|
+| `GEMINI_API_KEY` | Always | Gemini AI calls |
+| `DATABASE_URL` | Production | Postgres persistence |
+| `APP_ORIGIN` | Production | Same-origin write protection |
+| `DATA_ENCRYPTION_KEY` | Production | AES-256-GCM journal encryption |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Production | Clerk auth |
+| `CLERK_SECRET_KEY` | Production | Clerk auth |
+| `UPSTASH_REDIS_REST_URL` | Production | Rate limiting |
+| `UPSTASH_REDIS_REST_TOKEN` | Production | Rate limiting |
+| `CRON_SECRET` | Production | Cron job auth |
+| `SESSION_SECRET` | Dev + Prod | HMAC key for dev session hashes |
+| `SESSION_COOKIE_NAME` | Optional | Defaults to `mindtrail_session` |
+| `GEMINI_MODEL` | Optional | Defaults to `gemini-2.5-flash` |
 
-## Local Development — Test Sessions
-
-Local dev works **without Clerk**. When `CLERK_SECRET_KEY` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` are absent, `getActor()` in `src/lib/auth.js` automatically falls back to an anonymous HttpOnly dev session managed by `src/lib/session.js`. A `mindtrail_session` cookie is issued on first request. No login required — any evaluator can visit `http://localhost:3000` and use all features immediately.
-
-To test with Clerk authentication, set the four Clerk env vars in `.env.local` and use the Sign In / Sign Up buttons in the UI header.
+OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) are **not** app env vars — enter them in Clerk dashboard under Social Connections.
 
 ## Implementation Progress
 
 - [x] Correct stale challenge context from cooking app to mental wellness tracker.
-- [x] Initialize production-oriented Next.js project.
-- [x] Add secure server-side Gemini analysis and chat logic.
-- [x] Add Postgres persistence boundary with local development fallback.
+- [x] Initialize production-oriented Next.js 16 project.
+- [x] Add secure server-side Gemini analysis and chat logic with structured output.
+- [x] Add Postgres persistence boundary with in-memory local development fallback.
 - [x] Add validation, crisis detection, same-origin checks, and rate limiting.
 - [x] Add Clerk production auth, AES-GCM journal encryption, Upstash rate limiting, and Vercel Cron hook.
-- [x] Update Clerk integration to current App Router pattern with `proxy.js`, `ClerkProvider` inside `<body>`, and `Show` auth controls.
-- [x] Add hashed login-session tracking to persisted wellness entries.
-- [x] Create ignored local test instance env files for Gemini, Neon, Clerk, Upstash, encryption, and cron secrets.
-- [x] Build responsive first-screen application UI with honest empty states.
-- [x] Add test session documentation to CONTEXT.md so any evaluator can use the app without configuring Clerk.
+- [x] Use `proxy.js` (Next.js 16 convention) for Clerk route middleware — confirmed clean build, no warnings.
+- [x] Add `sessionId` from Clerk `auth()` to actor object; storageKey = SHA256(userId) for persistent history; sessionKey = SHA256(sessionId) for per-login audit tracking.
+- [x] Use `SESSION_SECRET` as HMAC key in `session.js` for tamper-resistant dev session hashes.
+- [x] Update `.env.example` with SESSION_SECRET and OAuth credentials noted as Clerk dashboard entries.
+- [x] Rewrite `rules.md` as comprehensive project rules covering all domains.
+- [x] Build responsive first-screen application UI with honest empty states, keyboard-usable forms, mobile layout.
 - [x] Install dependencies and generate lockfile.
-- [x] Run lint, tests, and production build.
+- [x] Run lint, tests, and production build — clean pass.
+- [x] Fix Vercel 500: conditional ClerkProvider/middleware, correct AI SDK `maxTokens` param.
 
 ## Verification Logs
 
 - **Last Run Verification**: 2026-06-20
-- **Status**: Passed
+- **Status**: Passed (clean — no warnings)
 - **Command Used**: `npm run verify`
-- **Output/Results**: ESLint passed. Vitest passed with 2 test files and 4 tests. `next build` passed with routes `/`, `/api/chat`, `/api/cron/patterns`, and `/api/entries`. Build loaded ignored local `.env.local` and `.env` for the test instance.
+- **Output/Results**: ESLint passed. Vitest passed — 2 test files, 4 tests (validation schema and safety detection). `next build` passed with `proxy.js` middleware active. Routes: `/`, `/api/chat`, `/api/cron/patterns`, `/api/entries`. Zero deprecation warnings. Build loaded `.env.local` and `.env`.
+
+### Vercel 500 Fix (2026-06-20)
+- `layout.js`: `ClerkProvider` and auth header now render only when `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is set. Prevents crash if Clerk isn't configured.
+- `proxy.js`: Middleware falls back to `NextResponse.next()` when Clerk env vars are absent. Prevents middleware crash blocking all routes.
+- `gemini.js`: Changed `maxOutputTokens` → `maxTokens` (correct Vercel AI SDK parameter name).

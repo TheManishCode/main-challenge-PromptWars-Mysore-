@@ -1,8 +1,16 @@
 import { cookies } from 'next/headers';
-import { createHash, randomUUID } from 'crypto';
+import { createHash, createHmac, randomUUID } from 'crypto';
 import { isProduction } from './env';
 
 const DEFAULT_COOKIE = 'mindtrail_session';
+
+function hashSession(id) {
+  const secret = process.env.SESSION_SECRET;
+  if (secret) {
+    return createHmac('sha256', secret).update(id).digest('hex');
+  }
+  return createHash('sha256').update(id).digest('hex');
+}
 
 export async function getSession() {
   const cookieName = process.env.SESSION_COOKIE_NAME || DEFAULT_COOKIE;
@@ -22,6 +30,6 @@ export async function getSession() {
 
   return {
     id: sessionId,
-    hash: createHash('sha256').update(sessionId).digest('hex')
+    hash: hashSession(sessionId)
   };
 }

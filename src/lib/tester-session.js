@@ -69,3 +69,14 @@ export async function getTesterSession() {
   const store = await cookies();
   return parseSession(store.get(TESTER_COOKIE)?.value);
 }
+
+export async function clearTesterSession() {
+  const store = await cookies();
+  store.set(TESTER_COOKIE, '', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isProduction(),
+    path: '/',
+    maxAge: 0
+  });
+}

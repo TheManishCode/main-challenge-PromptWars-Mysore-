@@ -97,6 +97,14 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - Dictates into the journal field in real-time; appends transcribed text.
 - Shows "Listening..." hint with pulsing animation.
 
+### Voice Mode Root-Cause Fix (2026-06-21)
+- **Bug:** Voice (and Face Check camera) failed with `not-allowed` in *every* browser, not just Edge.
+- **Root cause:** `next.config.mjs` sent a global `Permissions-Policy: camera=(), microphone=(), geolocation=()`. An empty allowlist `microphone=()` denies the mic to the origin itself, so `SpeechRecognition`/`getUserMedia` were blocked browser-wide regardless of OS or browser settings. Prior commits had mis-diagnosed this as an Edge/Windows speech setting.
+- **Fix:** `Permissions-Policy: camera=(self), microphone=(self), geolocation=()` — mic and camera allowed for own origin; geolocation stays off (unused). Verified live: `curl -sI http://localhost:3001/` returns the corrected header.
+- Re-enabled `interimResults = true` in `useSpeechInput` so dictation shows live word-by-word feedback (confirms recognition is working in real time).
+- Hardened `start()`: detaches the previous recognizer's handlers and disables keep-alive before `abort()`, removing a race where a stale `onend` could auto-restart a discarded recognizer.
+- Generalized `not-allowed`/`service-not-allowed` error messages (no longer blame Edge by default).
+
 ### Relief Room (new section)
 Four tools replacing generic breathing advice:
 - **Pressure Valve**: 60-second unfiltered writing dump → AI extracts the real underlying concern, names the emotion precisely, gives one 10-minute next step. Stateless (no DB).
@@ -133,17 +141,20 @@ Four tools replacing generic breathing advice:
 
 ## Verification Logs
 
-- Last Run Verification: 2026-06-21
-- Status: Passed lint and build. 20 routes compiled.
+- Last Run Verification: 2026-06-21 (voice mode root-cause fix)
+- Status: Passed lint, test, and build. Corrected `Permissions-Policy` header verified live.
 - Commands:
   - `npm run lint`
   - `npm.cmd run test`
   - `npm.cmd run build`
+  - `curl -sI http://localhost:3001/` (header check)
 - Results:
   - ESLint passed.
   - Vitest passed: 6 test files, 44 tests.
   - `next build` passed.
-  - Routes include `/api/tester`, `/api/entries`, `/api/entries/[id]/insights`, `/api/chat`, `/api/guestbook`, and the additional wellness APIs.
+  - Dev server returns HTTP 200 and renders `<title>MindTrail | PromptWars</title>`.
+  - `Permissions-Policy: camera=(self), microphone=(self), geolocation=()` confirmed served — microphone is now permitted for the origin in all browsers.
+  - Note: live speech-to-text needs a real microphone, a user-granted browser permission prompt, and spoken audio, so it cannot be exercised end-to-end by the automated preview harness; the previously failing header gate that blocked it in all browsers is fixed and verified.
 
 ## Major Rebuild (2026-06-20)
 

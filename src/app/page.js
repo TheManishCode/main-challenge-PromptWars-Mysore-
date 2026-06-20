@@ -1285,7 +1285,7 @@ function useSpeechInput() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const rec = new SR();
     rec.continuous = callbacksRef.current.continuous;
-    rec.interimResults = false;
+    rec.interimResults = true;
     rec.lang = 'en-US';
     rec.maxAlternatives = 1;
 
@@ -1325,12 +1325,10 @@ function useSpeechInput() {
       setListening(false);
       const isEdge = navigator.userAgent.includes('Edg/');
       const map = {
-        'not-allowed': isEdge
-          ? 'Edge blocked speech recognition. Fix: Windows Settings → Privacy & security → Speech → turn ON "Online speech recognition". Then reload this page.'
-          : 'Microphone access blocked. Click the lock icon in your address bar → Microphone → Allow, then reload.',
+        'not-allowed': 'Microphone access was blocked. Click the lock/mic icon in your address bar → allow Microphone, then reload.',
         'service-not-allowed': isEdge
-          ? 'Edge speech service unavailable. Enable "Online speech recognition" in Windows Privacy settings, then reload.'
-          : 'Speech recognition is not allowed in this context. Try Chrome on HTTPS.',
+          ? 'Edge speech service unavailable. Turn ON Windows Settings → Privacy & security → Speech → "Online speech recognition", then reload.'
+          : 'Speech recognition is unavailable in this context. Use Chrome or Edge over https:// or localhost.',
         'audio-capture': 'No microphone detected. Please connect one.',
         'network': 'Voice needs an internet connection (speech audio is processed by the browser).',
       };
@@ -1345,7 +1343,15 @@ function useSpeechInput() {
       setVoiceError('Voice input is not supported in this browser. Try Chrome or Edge.');
       return;
     }
-    try { recRef.current?.abort(); } catch {}
+    keepAliveRef.current = false;
+    const prev = recRef.current;
+    if (prev) {
+      prev.onresult = null;
+      prev.onend = null;
+      prev.onerror = null;
+      try { prev.abort(); } catch {}
+      recRef.current = null;
+    }
     setVoiceError('');
     setInterim('');
     callbacksRef.current = { onResult, onEnd, continuous };

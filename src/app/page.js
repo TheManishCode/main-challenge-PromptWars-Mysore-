@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/nextjs';
 
 const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
@@ -122,7 +122,9 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
     setShowOnboarding(false);
   }
 
-  function updateForm(name, value) { setForm((c) => ({ ...c, [name]: value })); }
+  function updateForm(name, value) {
+    setForm((c) => ({ ...c, [name]: typeof value === 'function' ? value(c[name]) : value }));
+  }
 
   async function submitEntry(event) {
     event.preventDefault();
@@ -157,10 +159,9 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
     }
   }
 
-  async function sendChat(event) {
-    event.preventDefault();
-    if (!chatText.trim()) return;
-    const outgoing = chatText.trim();
+  async function dispatchChat(text) {
+    const outgoing = text.trim();
+    if (!outgoing) return;
     setChatText('');
     setChatLog((c) => [...c, { role: 'student', content: outgoing }]);
     setLoading('chat');
@@ -175,6 +176,11 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
     } finally {
       setLoading('');
     }
+  }
+
+  function sendChat(event) {
+    event.preventDefault();
+    dispatchChat(chatText);
   }
 
   async function submitGuestbook(event) {
@@ -291,6 +297,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
           chatEndRef={chatEndRef}
           onText={setChatText}
           onSubmit={sendChat}
+          onSendText={dispatchChat}
         />
       )}
       {section === 'scan' && <ScanSection />}
@@ -1248,18 +1255,28 @@ function Stat({ label, value, highlight }) {
   );
 }
 
-/* ─── Journal Section ─────────────────────────────────────────────────────── */
+/* ─── Speech Input Hook ───────────────────────────────────────────────────── */
 
-function useVoiceJournal(onTranscript) {
+const noop = () => () => {};
+
+function useSpeechInput() {
   const [listening, setListening] = useState(false);
+  const supported = useSyncExternalStore(
+    noop,
+    () => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+    () => false
+  );
   const recRef = useRef(null);
-  const supported = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
 
-  function start() {
+  useEffect(() => {
+    return () => { recRef.current?.stop(); };
+  }, []);
+
+  function start({ continuous = true, onResult, onEnd } = {}) {
     if (!supported) return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const rec = new SR();
-    rec.continuous = true;
+    rec.continuous = continuous;
     rec.interimResults = false;
     rec.lang = 'en-IN';
     rec.onresult = (e) => {
@@ -1267,9 +1284,9 @@ function useVoiceJournal(onTranscript) {
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) text += e.results[i][0].transcript + ' ';
       }
-      if (text.trim()) onTranscript(text.trim());
+      if (text.trim()) onResult?.(text.trim());
     };
-    rec.onend = () => setListening(false);
+    rec.onend = () => { setListening(false); onEnd?.(); };
     rec.onerror = () => setListening(false);
     recRef.current = rec;
     rec.start();
@@ -1284,10 +1301,20 @@ function useVoiceJournal(onTranscript) {
   return { listening, start, stop, supported };
 }
 
+/* ─── Journal Section ─────────────────────────────────────────────────────── */
+
 function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }) {
-  const { listening, start, stop, supported } = useVoiceJournal((text) => {
-    onUpdate('journal', (form.journal ? form.journal + ' ' : '') + text);
-  });
+  const speech = useSpeechInput();
+
+  function handleVoiceMic() {
+    if (speech.listening) { speech.stop(); return; }
+    speech.start({
+      continuous: true,
+      onResult: (text) => {
+        onUpdate('journal', (current) => current ? `${current} ${text}` : text);
+      }
+    });
+  }
 
   return (
     <section className="journal-layout">
@@ -1312,19 +1339,19 @@ function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }
             maxLength={4000}
             required
           />
-          {supported && (
+          {speech.supported && (
             <button
               type="button"
-              className={`voice-btn ${listening ? 'voice-btn-active' : ''}`}
-              onClick={listening ? stop : start}
-              title={listening ? 'Stop voice input' : 'Start voice input'}
-              aria-label={listening ? 'Stop dictation' : 'Dictate journal entry'}
+              className={`voice-btn ${speech.listening ? 'voice-btn-active' : ''}`}
+              onClick={handleVoiceMic}
+              title={speech.listening ? 'Stop voice input' : 'Tap to dictate'}
+              aria-label={speech.listening ? 'Stop dictation' : 'Dictate journal entry'}
             >
-              {listening ? '⏹' : '🎙'}
+              {speech.listening ? '⏹' : '🎙'}
             </button>
           )}
         </div>
-        {listening && <p className="voice-hint">Listening... speak naturally. Click ⏹ to stop.</p>}
+        {speech.listening && <p className="voice-hint">Listening... speak naturally. Tap ⏹ to stop.</p>}
         <button className="primary-button" type="submit" disabled={loading === 'entry'}>{loading === 'entry' ? 'Analysing...' : 'Save journal entry'}</button>
       </form>
 
@@ -1390,14 +1417,57 @@ function BubbleMasonry({ bubbles }) {
 
 /* ─── Chat Section ────────────────────────────────────────────────────────── */
 
-function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit }) {
+function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit, onSendText }) {
+  const speech = useSpeechInput();
+  const capturedRef = useRef('');
+
+  function handleVoiceToggle() {
+    if (speech.listening) { speech.stop(); return; }
+    capturedRef.current = '';
+    speech.start({
+      continuous: false,
+      onResult: (text) => {
+        capturedRef.current = text;
+        onText(text);
+      },
+      onEnd: () => {
+        const captured = capturedRef.current.trim();
+        capturedRef.current = '';
+        if (captured) onSendText(captured);
+      }
+    });
+  }
+
   return (
     <section className="chat-panel">
       <div className="section-heading">
         <p className="eyebrow">Companion</p>
         <h2>Talk it through</h2>
-        <p className="section-subtext muted">This companion asks questions and tries to understand you — not lecture you. Tell it what&apos;s going on.</p>
+        <p className="section-subtext muted">Asks questions, listens, and tries to understand you — not lecture you. Type or speak.</p>
       </div>
+
+      {speech.supported && (
+        <div className="voice-chat-bar">
+          <button
+            type="button"
+            className={`voice-chat-btn ${speech.listening ? 'voice-chat-btn-active' : ''}`}
+            onClick={handleVoiceToggle}
+            disabled={loading}
+            aria-label={speech.listening ? 'Stop speaking' : 'Speak to companion'}
+          >
+            {speech.listening ? (
+              <>
+                <span className="voice-wave"><span /><span /><span /><span /><span /></span>
+                Stop speaking
+              </>
+            ) : (
+              <>🎙 Speak to companion</>
+            )}
+          </button>
+          {speech.listening && <p className="voice-chat-hint">Listening... speak clearly. Message sends automatically when you stop.</p>}
+        </div>
+      )}
+
       <div className="chat-feed">
         {!chatLog.length && (
           <EmptyState
@@ -1412,8 +1482,15 @@ function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit 
         <div ref={chatEndRef} />
       </div>
       <form className="chat-form" onSubmit={onSubmit}>
-        <input className="input" value={chatText} onChange={(e) => onText(e.target.value)} placeholder="What's actually going on right now?" maxLength={1200} />
-        <button className="primary-button" type="submit" disabled={loading}>Send</button>
+        <input
+          className="input"
+          value={chatText}
+          onChange={(e) => onText(e.target.value)}
+          placeholder="What's actually going on right now?"
+          maxLength={1200}
+          disabled={speech.listening}
+        />
+        <button className="primary-button" type="submit" disabled={loading || speech.listening}>Send</button>
       </form>
     </section>
   );

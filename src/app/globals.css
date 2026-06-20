@@ -1271,6 +1271,70 @@ input[type="range"] {
 .scan-tip { border-left: 3px solid var(--brand); }
 .scan-tip h4 { color: var(--brand-dark); }
 
+/* ─── Voice Chat Bar ─────────────────────────────────────────────────────── */
+
+.voice-chat-bar {
+  display: grid;
+  gap: 8px;
+}
+
+.voice-chat-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 200ms ease, background 200ms ease;
+  width: fit-content;
+}
+
+.voice-chat-btn:hover { border-color: var(--brand); }
+
+.voice-chat-btn-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--paper));
+  color: var(--accent);
+}
+
+.voice-chat-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.voice-wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+}
+
+.voice-wave span {
+  display: inline-block;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: wave-bar 0.9s ease-in-out infinite;
+}
+
+.voice-wave span:nth-child(1) { height: 6px; animation-delay: 0s; }
+.voice-wave span:nth-child(2) { height: 12px; animation-delay: 0.1s; }
+.voice-wave span:nth-child(3) { height: 18px; animation-delay: 0.2s; }
+.voice-wave span:nth-child(4) { height: 12px; animation-delay: 0.3s; }
+.voice-wave span:nth-child(5) { height: 6px; animation-delay: 0.4s; }
+
+@keyframes wave-bar {
+  0%, 100% { transform: scaleY(0.5); opacity: 0.6; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+
 /* ─── Chat thinking dots ─────────────────────────────────────────────────── */
 
 .thinking-dots {

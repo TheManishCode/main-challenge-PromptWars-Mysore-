@@ -11,7 +11,9 @@ export function isProduction() {
 }
 
 export function getAppOrigin() {
-  if (process.env.APP_ORIGIN) return process.env.APP_ORIGIN;
+  const configuredOrigin = process.env.APP_ORIGIN;
+  const isLocalOrigin = configuredOrigin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(configuredOrigin);
+  if (configuredOrigin && (!isProduction() || !isLocalOrigin)) return configuredOrigin;
   if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
     return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
   }

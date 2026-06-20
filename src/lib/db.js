@@ -155,6 +155,15 @@ async function initDb(client) {
     CREATE INDEX IF NOT EXISTS idx_mock_tests_user_created
       ON mock_tests(user_key, created_at DESC);
   `);
+  await client.query(`
+    ALTER TABLE wellness_entries
+      ADD COLUMN IF NOT EXISTS stress INTEGER NOT NULL DEFAULT 5 CHECK (stress BETWEEN 1 AND 10),
+      ADD COLUMN IF NOT EXISTS anxiety INTEGER NOT NULL DEFAULT 5 CHECK (anxiety BETWEEN 1 AND 10),
+      ADD COLUMN IF NOT EXISTS confidence INTEGER NOT NULL DEFAULT 5 CHECK (confidence BETWEEN 1 AND 10),
+      ADD COLUMN IF NOT EXISTS study_hours NUMERIC(4, 1) NOT NULL DEFAULT 0 CHECK (study_hours BETWEEN 0 AND 24),
+      ADD COLUMN IF NOT EXISTS emoji TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS study_subject TEXT NOT NULL DEFAULT '';
+  `);
   initialized = true;
 }
 

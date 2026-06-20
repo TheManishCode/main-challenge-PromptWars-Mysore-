@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SignInButton, SignUpButton, UserButton, useSignIn, useUser } from '@clerk/nextjs';
+import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/nextjs';
 
 const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
@@ -12,10 +12,6 @@ const SECTIONS = [
 ];
 
 const INITIAL_FORM = { mood: 5, energy: 5, sleepHours: 7, exam: '', journal: '' };
-const TEST_CREDENTIALS = {
-  email: 'manishp.dev@gmail.com',
-  password: 'Test_key01'
-};
 
 function formatDate(dateStr) {
   if (!dateStr) return 'Just now';
@@ -40,6 +36,7 @@ export default function Home() {
 
 function AuthenticatedApp() {
   const { isLoaded, isSignedIn, user } = useUser();
+  const [testerMode, setTesterMode] = useState(false);
   const [section, setSection] = useState('journal');
   const [theme, setTheme] = useState('light');
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -57,6 +54,15 @@ function AuthenticatedApp() {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
+  useEffect(() => {
+    if (!isLoaded || isSignedIn || testerMode) return;
+    fetch('/api/entries')
+      .then((res) => {
+        if (res.ok) setTesterMode(true);
+      })
+      .catch(() => {});
+  }, [isLoaded, isSignedIn, testerMode]);
+
   const loadEntries = useCallback(async () => {
     const res = await fetch('/api/entries');
     if (!res.ok) throw new Error('Unable to load your journal');
@@ -72,8 +78,8 @@ function AuthenticatedApp() {
   }, []);
 
   useEffect(() => {
-    if (!isSignedIn) return;
-    const seenKey = `mindtrail-onboarding-${user?.id}`;
+    if (!isSignedIn && !testerMode) return;
+    const seenKey = `mindtrail-onboarding-${user?.id || 'tester'}`;
     Promise.resolve()
       .then(() => {
         setShowOnboarding(!localStorage.getItem(seenKey));
@@ -81,7 +87,7 @@ function AuthenticatedApp() {
         return Promise.all([loadEntries(), loadGuestbook()]);
       })
       .catch((err) => setError(err.message));
-  }, [isSignedIn, loadEntries, loadGuestbook, user?.id]);
+  }, [isSignedIn, loadEntries, loadGuestbook, testerMode, user?.id]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -94,7 +100,7 @@ function AuthenticatedApp() {
   }, [entries]);
 
   function finishOnboarding() {
-    if (user?.id) localStorage.setItem(`mindtrail-onboarding-${user.id}`, 'true');
+    localStorage.setItem(`mindtrail-onboarding-${user?.id || 'tester'}`, 'true');
     setShowOnboarding(false);
   }
 
@@ -187,7 +193,7 @@ function AuthenticatedApp() {
   }
 
   if (!isLoaded) return <LoadingScreen />;
-  if (!isSignedIn) return <AuthScreen />;
+  if (!isSignedIn && !testerMode) return <AuthScreen onTesterReady={() => setTesterMode(true)} />;
 
   return (
     <main className="product-shell">
@@ -200,11 +206,11 @@ function AuthenticatedApp() {
           <button className="icon-button" type="button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} title="Toggle theme">
             {theme === 'light' ? 'Dark' : 'Light'}
           </button>
-          <UserButton />
+          {isSignedIn ? <UserButton /> : <span className="tester-badge">Tester</span>}
         </div>
       </header>
 
-      {showOnboarding && <OnboardingCard name={user?.firstName || 'there'} onDone={finishOnboarding} />}
+      {showOnboarding && <OnboardingCard name={user?.firstName || (testerMode ? 'tester' : 'there')} onDone={finishOnboarding} />}
 
       <section className="status-strip" aria-label="Journal summary">
         <Stat label="Entries" value={metrics.count} />
@@ -277,29 +283,20 @@ function AuthSetupRequired() {
   );
 }
 
-function AuthScreen() {
-  const { isLoaded, signIn, setActive } = useSignIn();
+function AuthScreen({ onTesterReady }) {
   const [testerLoading, setTesterLoading] = useState(false);
   const [testerError, setTesterError] = useState('');
 
   async function signInTester() {
-    if (!isLoaded) return;
     setTesterLoading(true);
     setTesterError('');
     try {
-      const result = await signIn.create({
-        identifier: TEST_CREDENTIALS.email,
-        password: TEST_CREDENTIALS.password
-      });
-
-      if (result.status === 'complete') {
-        await setActive({ session: result.createdSessionId });
-        return;
-      }
-
-      setTesterError('Tester account needs an additional Clerk step before sign-in can complete.');
+      const res = await fetch('/api/tester', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Tester login failed');
+      onTesterReady();
     } catch (err) {
-      setTesterError(err.errors?.[0]?.message || err.message || 'Tester login failed');
+      setTesterError(err.message || 'Tester login failed');
     } finally {
       setTesterLoading(false);
     }
@@ -311,14 +308,9 @@ function AuthScreen() {
         <p className="eyebrow">Private journal, real memory</p>
         <h1>Sign in to enter MindTrail</h1>
         <p>Your companion, journal history, AI insight bubbles, and guestbook identity all live behind your account.</p>
-        <div className="tester-card">
-          <span>Testing credentials</span>
-          <code>{TEST_CREDENTIALS.email}</code>
-          <code>{TEST_CREDENTIALS.password}</code>
-        </div>
         <div className="auth-actions">
-          <button className="primary-button" type="button" onClick={signInTester} disabled={!isLoaded || testerLoading}>
-            {testerLoading ? 'Signing in...' : 'Tester login'}
+          <button className="primary-button" type="button" onClick={signInTester} disabled={testerLoading}>
+            {testerLoading ? 'Entering...' : 'Tester login'}
           </button>
           <SignInButton mode="modal"><button className="primary-button" type="button">Log in</button></SignInButton>
           <SignUpButton mode="modal"><button className="secondary-button" type="button">Create account</button></SignUpButton>

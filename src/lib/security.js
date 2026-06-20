@@ -4,11 +4,14 @@ import { Redis } from '@upstash/redis';
 import { getAppOrigin, isProduction } from './env';
 
 const buckets = new Map();
-let upstashLimiter;
+const upstashLimiters = new Map();
 
 export function assertSameOrigin(request) {
   const origin = request.headers.get('origin');
   if (!origin) return;
+
+  const requestOrigin = new URL(request.url).origin;
+  if (origin === requestOrigin) return;
 
   const expected = getAppOrigin();
   if (!expected) {
@@ -32,14 +35,15 @@ function getUpstashLimiter(limit, windowMs) {
     return null;
   }
 
-  if (!upstashLimiter) {
-    upstashLimiter = new Ratelimit({
+  const key = `${limit}:${windowMs}`;
+  if (!upstashLimiters.has(key)) {
+    upstashLimiters.set(key, new Ratelimit({
       redis: Redis.fromEnv(),
       limiter: Ratelimit.slidingWindow(limit, `${Math.ceil(windowMs / 1000)} s`),
       analytics: false
-    });
+    }));
   }
-  return upstashLimiter;
+  return upstashLimiters.get(key);
 }
 
 export async function rateLimit(key, { limit, windowMs }) {

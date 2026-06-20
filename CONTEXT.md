@@ -85,10 +85,56 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - [x] Add authenticated shared guestbook with handwritten scattered note wall.
 - [x] Update README and `.env.example` to match auth-first architecture.
 
+## Major Feature Update (2026-06-21)
+
+### Empathetic AI Chat
+- `chatWithCompanion()` system prompt rewritten to be Socratic and question-first.
+- AI reflects what it heard, acknowledges pain before offering anything, ends every response with a genuine question.
+- Never lectures, never lists tips unprompted.
+
+### Voice Journal
+- Web Speech API mic button inside the journal textarea.
+- Dictates into the journal field in real-time; appends transcribed text.
+- Shows "Listening..." hint with pulsing animation.
+
+### Relief Room (new section)
+Four tools replacing generic breathing advice:
+- **Pressure Valve**: 60-second unfiltered writing dump → AI extracts the real underlying concern, names the emotion precisely, gives one 10-minute next step. Stateless (no DB).
+- **Worry Parking Lot**: Park loop-thoughts with AI acknowledgment + review date. Persisted in `worry_items` DB table. Mark as resolved.
+- **Tomorrow's Letter**: AI generates a letter from the student's future self, using real journal data. Deeply personalized.
+- **Alternate Timeline Generator**: Computes burnout risk at current pace vs +1hr sleep vs balanced study hours. Detects Stress Contagion (external stressors from journal trigger analysis).
+
+### Scan Section (new section)
+- Study Desk Analysis: upload desk photo → Gemini Vision identifies stress signals (clutter, caffeine count, late-night setup).
+- Handwriting Analysis: upload handwriting sample → AI observes pressure, speed, corrections.
+- Face Check: camera capture → AI observes tiredness, visible tension.
+- Client-side image compression (max 768px) before upload. Route: `/api/analyze-image`.
+
+### Graph Improvements
+- Physics-based force simulation (repulsion + spring edges + center gravity).
+- Nodes colored by mood: red ≤3, amber 4-6, green 7+.
+- High-burnout entries (>60%) pulse with a red ring animation.
+- Simulation runs continuously (settles over ~200 ticks).
+
+### New API Routes
+- `POST /api/analyze-image` — Gemini Vision multimodal analysis
+- `GET/POST/PATCH /api/worry` — Worry parking lot
+- `POST /api/future-letter` — Letter from future self
+- `POST /api/pressure-valve` — Pressure valve clarity
+
+### New DB Table
+- `worry_items`: id, user_key, worry_text, acknowledgment, is_in_their_control, what_they_can_control, park_until, park_message, resolved, created_at
+
+### New Gemini Functions
+- `generateFutureLetter(entries)` — returns letter + keyStrengths + reminder
+- `processPressureValve(rawDump)` — returns realConcern + whatYouFeel + oneNextStep + validation
+- `analyzeWorry(worryText)` — returns acknowledgment + isInTheirControl + whatTheyCanControl + parkUntil + parkMessage
+- `analyzeImage(buffer, mimeType, type)` — multimodal desk/handwriting/face analysis
+
 ## Verification Logs
 
-- Last Run Verification: 2026-06-20
-- Status: Passed for lint, tests, and build after AI schema hardening.
+- Last Run Verification: 2026-06-21
+- Status: Passed lint and build. 20 routes compiled.
 - Commands:
   - `npm run lint`
   - `npm.cmd run test`

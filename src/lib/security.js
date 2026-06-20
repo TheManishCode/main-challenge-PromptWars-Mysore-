@@ -8,9 +8,10 @@ let upstashLimiter;
 
 export function assertSameOrigin(request) {
   const origin = request.headers.get('origin');
-  const expected = getAppOrigin();
+  if (!origin) return;
 
-  if (!origin || !expected) {
+  const expected = getAppOrigin();
+  if (!expected) {
     if (isProduction()) {
       const error = new Error('APP_ORIGIN must be configured for production writes');
       error.status = 500;

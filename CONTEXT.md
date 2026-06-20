@@ -76,13 +76,34 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - [x] Install dependencies and generate lockfile.
 - [x] Run lint, tests, and production build — clean pass.
 - [x] Fix Vercel 500: conditional ClerkProvider/middleware, correct AI SDK `maxTokens` param.
+- [x] Fix Vercel 403 "Request origin is not allowed" — auto-detect origin from `VERCEL_PROJECT_PRODUCTION_URL` / `VERCEL_URL`; skip origin check when no `Origin` header.
+- [x] Add tester login (anonymous cookie-based auth, no signup required) — `POST /api/tester` sets 24-hour httpOnly cookie; `auth.js` checks tester cookie as third auth path.
+- [x] Add on-demand Gemini suggestions API — `POST /api/suggest` with rate limit (5/hour); `generateSuggestions()` in `gemini.js` returns schedule, study tips, wellness actions, weekly focus.
+- [x] Install Recharts and build interactive chart components — `MoodEnergyChart` (LineChart), `SleepChart` (BarChart), `StressDonut` (PieChart) in `src/app/components/Charts.js`.
+- [x] Complete frontend rebuild with indigo-blue palette — 3-tab layout (Check-in, Insights, Chat), interactive charts grid, on-demand AI suggestions panel, tester button.
+- [x] Expand test suite from 4 to 44 tests across 6 test files — env, security, crypto, validation, safety coverage.
 
 ## Verification Logs
 
 - **Last Run Verification**: 2026-06-20
 - **Status**: Passed (clean — no warnings)
 - **Command Used**: `npm run verify`
-- **Output/Results**: ESLint passed. Vitest passed — 2 test files, 4 tests (validation schema and safety detection). `next build` passed with `proxy.js` middleware active. Routes: `/`, `/api/chat`, `/api/cron/patterns`, `/api/entries`. Zero deprecation warnings. Build loaded `.env.local` and `.env`.
+- **Output/Results**: ESLint passed. Vitest passed — 6 test files, 44 tests (env, security, crypto, validation-extended, safety, validation). `next build` passed. Routes: `/`, `/api/chat`, `/api/cron/patterns`, `/api/entries`, `/api/suggest`, `/api/tester`.
+
+### Major Upgrade (2026-06-20)
+- `env.js`: `getAppOrigin()` auto-detects from `VERCEL_PROJECT_PRODUCTION_URL` and `VERCEL_URL` before falling back.
+- `security.js`: Skips origin check when no `Origin` header (browser same-origin navigations).
+- `auth.js`: Three auth paths — Clerk → tester cookie → dev session. Tester cookie (`mindtrail_tester`) provides anonymous access.
+- `session.js`: Accepts configurable cookie name parameter.
+- `gemini.js`: Added `generateSuggestions(entries)` with structured schema output.
+- `validation.js`: Added `suggestSchema` for suggestion count parameter.
+- `api/tester/route.js`: NEW — POST sets 24-hour tester cookie.
+- `api/suggest/route.js`: NEW — POST with auth + rate limit, calls `generateSuggestions`.
+- `components/Charts.js`: NEW — 3 interactive Recharts components (mood/energy line, sleep bar, stress donut).
+- `components/TesterButton.js`: NEW — Client component for anonymous tester login.
+- `globals.css`: Complete rewrite — indigo-blue palette, dark theme, chart grid, responsive layout.
+- `page.js`: Complete rewrite — 3-tab interface, insights with charts + AI suggestions, clean form.
+- `layout.js`: Updated with TesterButton alongside Clerk auth.
 
 ### Vercel 500 Fix (2026-06-20)
 - `layout.js`: `ClerkProvider` and auth header now render only when `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is set. Prevents crash if Clerk isn't configured.

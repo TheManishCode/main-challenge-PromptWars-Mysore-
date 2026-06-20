@@ -12,6 +12,10 @@ export const chatSchema = z.object({
   message: z.string().trim().min(2).max(1200)
 });
 
+export const suggestSchema = z.object({
+  count: z.coerce.number().int().min(1).max(20).optional().default(5)
+});
+
 export function parseJsonBody(schema, body) {
   const parsed = schema.safeParse(body);
   if (!parsed.success) {

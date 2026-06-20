@@ -1,16 +1,54 @@
 import { describe, expect, it } from 'vitest';
-import { crisisResponse, detectCrisis } from '@/lib/safety';
+import { crisisResponse, detectCrisis, buildSafetyInstruction } from '@/lib/safety';
 
-describe('safety', () => {
-  it('detects direct crisis language before model calls', () => {
+describe('detectCrisis', () => {
+  it('detects "no reason to live"', () => {
     expect(detectCrisis('I feel like I have no reason to live after this exam')).toBe(true);
-    expect(detectCrisis('I am stressed about revision but going to sleep now')).toBe(false);
   });
 
-  it('returns a human escalation message without hiding the limitation', () => {
+  it('detects "suicide"', () => {
+    expect(detectCrisis('I have been thinking about suicide')).toBe(true);
+  });
+
+  it('detects "kill myself"', () => {
+    expect(detectCrisis('I want to kill myself')).toBe(true);
+  });
+
+  it('detects "self-harm"', () => {
+    expect(detectCrisis('I have been doing self-harm lately')).toBe(true);
+  });
+
+  it('detects "hurt myself"', () => {
+    expect(detectCrisis('Sometimes I want to hurt myself')).toBe(true);
+  });
+
+  it('returns false for normal stress language', () => {
+    expect(detectCrisis('I am stressed about revision but going to sleep now')).toBe(false);
+    expect(detectCrisis('This exam is killing my motivation')).toBe(false);
+  });
+
+  it('handles null and undefined input', () => {
+    expect(detectCrisis(null)).toBe(false);
+    expect(detectCrisis(undefined)).toBe(false);
+    expect(detectCrisis('')).toBe(false);
+  });
+});
+
+describe('crisisResponse', () => {
+  it('returns escalation message with KIRAN helpline', () => {
     const response = crisisResponse();
     expect(response.isCrisis).toBe(true);
     expect(response.message).toContain('emergency services');
     expect(response.message).toContain('1800-599-0019');
+  });
+});
+
+describe('buildSafetyInstruction', () => {
+  it('returns string with key safety constraints', () => {
+    const instruction = buildSafetyInstruction();
+    expect(typeof instruction).toBe('string');
+    expect(instruction).toContain('not a doctor');
+    expect(instruction).toContain('1800-599-0019');
+    expect(instruction).toContain('Do not diagnose');
   });
 });

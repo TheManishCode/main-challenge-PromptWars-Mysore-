@@ -12,8 +12,8 @@ function hashSession(id) {
   return createHash('sha256').update(id).digest('hex');
 }
 
-export async function getSession() {
-  const cookieName = process.env.SESSION_COOKIE_NAME || DEFAULT_COOKIE;
+export async function getSession(overrideCookieName) {
+  const cookieName = overrideCookieName || process.env.SESSION_COOKIE_NAME || DEFAULT_COOKIE;
   const store = await cookies();
   let sessionId = store.get(cookieName)?.value;
 

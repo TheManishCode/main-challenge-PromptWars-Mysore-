@@ -79,3 +79,42 @@ Respond with 3 concise paragraphs maximum. Stay empathetic and actionable.`,
 
   return result.text;
 }
+
+const suggestionsSchema = z.object({
+  schedule: z.array(z.string().min(4)).min(2).max(6),
+  studyTips: z.array(z.string().min(4)).min(2).max(6),
+  wellnessActions: z.array(z.string().min(4)).min(2).max(6),
+  weeklyFocus: z.string().min(8)
+});
+
+export async function generateSuggestions(entries) {
+  const context = entries.map((entry) => ({
+    exam: entry.exam,
+    mood: entry.mood,
+    energy: entry.energy,
+    sleepHours: entry.sleepHours,
+    stressLevel: entry.analysis?.stressLevel,
+    createdAt: entry.createdAt
+  }));
+
+  const result = await generateObject({
+    model: getModel(),
+    schema: suggestionsSchema,
+    system: buildSafetyInstruction(),
+    prompt: `Based on this student's recent wellness log data, generate personalized scheduling and study suggestions.
+
+Wellness data (most recent first):
+${JSON.stringify(context).slice(0, 4000)}
+
+Generate:
+- schedule: daily schedule suggestions (study blocks, breaks, sleep times) based on their sleep and energy patterns
+- studyTips: specific study strategies based on their exam focus and stress level
+- wellnessActions: wellness activities tailored to their mood and energy patterns
+- weeklyFocus: one sentence describing the most important thing to focus on this week
+
+Base everything on the actual data provided. Do not invent patterns not supported by the logs.`,
+    temperature: 0.5
+  });
+
+  return result.object;
+}

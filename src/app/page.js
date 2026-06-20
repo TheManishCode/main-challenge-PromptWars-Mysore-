@@ -1,8 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { MoodEnergyChart, SleepChart, StressDonut } from './components/Charts';
 
-const initialForm = {
+const TABS = [
+  { id: 'checkin', label: 'Check-in' },
+  { id: 'insights', label: 'Insights' },
+  { id: 'chat', label: 'Chat' }
+];
+
+const INITIAL_FORM = {
   mood: 5,
   energy: 5,
   sleepHours: 7,
@@ -10,14 +17,25 @@ const initialForm = {
   journal: ''
 };
 
-function stressTone(level) {
-  if (level === 'high') return 'tone-danger';
-  if (level === 'moderate') return 'tone-warn';
-  return 'tone-good';
+function stressClass(level) {
+  if (level === 'high') return 'stress-high';
+  if (level === 'moderate') return 'stress-moderate';
+  return 'stress-low';
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  return new Date(dateStr).toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 export default function Home() {
-  const [form, setForm] = useState(initialForm);
+  const [tab, setTab] = useState('checkin');
+  const [form, setForm] = useState(INITIAL_FORM);
   const [entries, setEntries] = useState([]);
   const [activeEntry, setActiveEntry] = useState(null);
   const [chatText, setChatText] = useState('');
@@ -26,28 +44,39 @@ export default function Home() {
   const [chatLoading, setChatLoading] = useState(false);
   const [error, setError] = useState('');
   const [crisis, setCrisis] = useState(null);
+  const [suggestions, setSuggestions] = useState(null);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const chatEndRef = useRef(null);
 
   useEffect(() => {
     fetch('/api/entries')
-      .then((res) => res.json())
+      .then((r) => r.json())
       .then((data) => {
         if (data.entries) {
           setEntries(data.entries);
-          setActiveEntry(data.entries[0] || null);
+          if (data.entries[0]) setActiveEntry(data.entries[0]);
         }
       })
-      .catch((err) => setError(err.message));
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatLog]);
 
   const trend = useMemo(() => {
     if (!entries.length) return null;
-    const avgMood = entries.reduce((sum, entry) => sum + Number(entry.mood), 0) / entries.length;
-    const avgSleep = entries.reduce((sum, entry) => sum + Number(entry.sleepHours), 0) / entries.length;
-    return { avgMood: avgMood.toFixed(1), avgSleep: avgSleep.toFixed(1), count: entries.length };
+    const avg = (fn) => (entries.reduce((s, e) => s + fn(e), 0) / entries.length).toFixed(1);
+    return {
+      count: entries.length,
+      avgMood: avg((e) => Number(e.mood)),
+      avgEnergy: avg((e) => Number(e.energy)),
+      avgSleep: avg((e) => Number(e.sleepHours))
+    };
   }, [entries]);
 
   function updateField(name, value) {
-    setForm((current) => ({ ...current, [name]: value }));
+    setForm((f) => ({ ...f, [name]: value }));
   }
 
   async function submitEntry(event) {
@@ -55,22 +84,23 @@ export default function Home() {
     setLoading(true);
     setError('');
     setCrisis(null);
-
     try {
-      const response = await fetch('/api/entries', {
+      const res = await fetch('/api/entries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Unable to analyze journal');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to analyze journal');
       if (data.crisis) {
         setCrisis(data.crisis.message);
         return;
       }
-      setEntries((current) => [data.entry, ...current]);
+      setEntries((cur) => [data.entry, ...cur]);
       setActiveEntry(data.entry);
-      setForm(initialForm);
+      setForm(INITIAL_FORM);
+      setSuggestions(null);
+      setTab('insights');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -81,22 +111,20 @@ export default function Home() {
   async function sendChat(event) {
     event.preventDefault();
     if (!chatText.trim()) return;
-
     const outgoing = chatText.trim();
     setChatText('');
     setChatLoading(true);
-    setChatLog((current) => [...current, { role: 'student', text: outgoing }]);
+    setChatLog((cur) => [...cur, { role: 'student', text: outgoing }]);
     setError('');
-
     try {
-      const response = await fetch('/api/chat', {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: outgoing })
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Unable to reach companion');
-      setChatLog((current) => [...current, { role: 'companion', text: data.reply }]);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to reach companion');
+      setChatLog((cur) => [...cur, { role: 'companion', text: data.reply }]);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -104,189 +132,357 @@ export default function Home() {
     }
   }
 
+  async function fetchSuggestions() {
+    setSuggestLoading(true);
+    try {
+      const res = await fetch('/api/suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: 10 })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to get suggestions');
+      setSuggestions(data.suggestions);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSuggestLoading(false);
+    }
+  }
+
   return (
     <main className="app-shell">
-      <section className="workspace">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">PromptWars Main Challenge</p>
-            <h1>MindTrail</h1>
-          </div>
-          <div className="top-actions">
-            <div className="status-pill">Exam wellness tracker</div>
-          </div>
-        </header>
+      <div className="brand">
+        <h1>MindTrail</h1>
+        <p>Wellness tracker for exam preparation</p>
+      </div>
 
-        <div className="grid">
-          <section className="panel journal-panel" aria-labelledby="journal-title">
-            <div className="section-heading">
-              <p className="eyebrow">Daily check-in</p>
-              <h2 id="journal-title">Log what is actually happening</h2>
-            </div>
-            <form onSubmit={submitEntry} className="entry-form">
-              <label>
-                Exam focus
-                <input
-                  value={form.exam}
-                  onChange={(event) => updateField('exam', event.target.value)}
-                  placeholder="NEET, JEE, CUET, CAT, GATE, UPSC..."
-                  maxLength={80}
-                  required
-                />
-              </label>
-
-              <div className="control-row">
-                <label>
-                  Mood
-                  <input
-                    type="range"
-                    min="1"
-                    max="10"
-                    value={form.mood}
-                    onChange={(event) => updateField('mood', Number(event.target.value))}
-                  />
-                  <span>{form.mood}/10</span>
-                </label>
-                <label>
-                  Energy
-                  <input
-                    type="range"
-                    min="1"
-                    max="10"
-                    value={form.energy}
-                    onChange={(event) => updateField('energy', Number(event.target.value))}
-                  />
-                  <span>{form.energy}/10</span>
-                </label>
-                <label>
-                  Sleep
-                  <input
-                    type="number"
-                    min="0"
-                    max="16"
-                    step="0.5"
-                    value={form.sleepHours}
-                    onChange={(event) => updateField('sleepHours', Number(event.target.value))}
-                  />
-                </label>
-              </div>
-
-              <label>
-                Journal
-                <textarea
-                  value={form.journal}
-                  onChange={(event) => updateField('journal', event.target.value)}
-                  placeholder="Write about study pressure, sleep, distractions, confidence, family expectations, or anything that affected your day."
-                  minLength={30}
-                  maxLength={4000}
-                  required
-                />
-              </label>
-
-              <button type="submit" disabled={loading}>
-                {loading ? 'Analyzing...' : 'Analyze check-in'}
-              </button>
-            </form>
-            {error ? <p className="alert">{error}</p> : null}
-            {crisis ? <p className="alert crisis">{crisis}</p> : null}
-          </section>
-
-          <section className="panel insight-panel" aria-labelledby="insights-title">
-            <div className="section-heading">
-              <p className="eyebrow">Pattern lens</p>
-              <h2 id="insights-title">Personalized support</h2>
-            </div>
-            {activeEntry ? (
-              <article className="analysis">
-                <div className={`stress-badge ${stressTone(activeEntry.analysis.stressLevel)}`}>
-                  {activeEntry.analysis.stressLevel} stress
-                </div>
-                <h3>{activeEntry.analysis.summary}</h3>
-                <InfoList title="Hidden triggers" items={activeEntry.analysis.hiddenTriggers} />
-                <InfoList title="Emotional patterns" items={activeEntry.analysis.emotionalPatterns} />
-                <InfoList title="Coping strategies" items={activeEntry.analysis.copingStrategies} />
-                <div className="exercise">
-                  <strong>Mindfulness reset</strong>
-                  <p>{activeEntry.analysis.mindfulnessExercise}</p>
-                </div>
-                <blockquote>{activeEntry.analysis.encouragement}</blockquote>
-                <p className="follow-up">{activeEntry.analysis.followUpQuestion}</p>
-              </article>
-            ) : (
-              <div className="empty-state">
-                <h3>No check-ins yet</h3>
-                <p>Your first journal analysis will appear here after the backend receives a valid Gemini response.</p>
-              </div>
+      <nav className="tab-nav" role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            data-active={tab === t.id}
+            className="tab-btn"
+            onClick={() => { setTab(t.id); setError(''); }}
+          >
+            {t.label}
+            {t.id === 'insights' && entries.length > 0 && (
+              <span className="tab-badge">{entries.length}</span>
             )}
-          </section>
+          </button>
+        ))}
+      </nav>
 
-          <section className="panel history-panel" aria-labelledby="history-title">
-            <div className="section-heading">
-              <p className="eyebrow">Trend</p>
-              <h2 id="history-title">Recent logs</h2>
-            </div>
-            {trend ? (
-              <div className="metrics">
-                <span>{trend.count} logs</span>
-                <span>{trend.avgMood} avg mood</span>
-                <span>{trend.avgSleep}h sleep</span>
-              </div>
-            ) : null}
-            <div className="history-list">
-              {entries.map((entry) => (
-                <button key={entry.id} type="button" onClick={() => setActiveEntry(entry)}>
-                  <span>{entry.exam}</span>
-                  <small>
-                    Mood {entry.mood}/10 · Energy {entry.energy}/10
-                  </small>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel companion-panel" aria-labelledby="companion-title">
-            <div className="section-heading">
-              <p className="eyebrow">Companion</p>
-              <h2 id="companion-title">Ask for a reset</h2>
-            </div>
-            <div className="chat-log" aria-live="polite">
-              {chatLog.length ? (
-                chatLog.map((message, index) => (
-                  <p key={`${message.role}-${index}`} className={message.role}>
-                    {message.text}
-                  </p>
-                ))
-              ) : (
-                <p className="empty-chat">Ask for a study break plan, a confidence reset, or help naming a stress trigger.</p>
-              )}
-            </div>
-            <form onSubmit={sendChat} className="chat-form">
-              <input
-                value={chatText}
-                onChange={(event) => setChatText(event.target.value)}
-                placeholder="What do you need right now?"
-                maxLength={1200}
-              />
-              <button type="submit" disabled={chatLoading}>
-                {chatLoading ? '...' : 'Send'}
-              </button>
-            </form>
-          </section>
-        </div>
-      </section>
+      <div className="tab-content" key={tab}>
+        {tab === 'checkin' && (
+          <CheckinTab
+            form={form}
+            loading={loading}
+            error={error}
+            crisis={crisis}
+            onUpdate={updateField}
+            onSubmit={submitEntry}
+          />
+        )}
+        {tab === 'insights' && (
+          <InsightsTab
+            entries={entries}
+            activeEntry={activeEntry}
+            trend={trend}
+            suggestions={suggestions}
+            suggestLoading={suggestLoading}
+            onSelect={setActiveEntry}
+            onSuggest={fetchSuggestions}
+          />
+        )}
+        {tab === 'chat' && (
+          <ChatTab
+            chatLog={chatLog}
+            chatText={chatText}
+            chatLoading={chatLoading}
+            error={error}
+            chatEndRef={chatEndRef}
+            onTextChange={setChatText}
+            onSubmit={sendChat}
+          />
+        )}
+      </div>
     </main>
   );
 }
 
-function InfoList({ title, items }) {
+function CheckinTab({ form, loading, error, crisis, onUpdate, onSubmit }) {
   return (
-    <div className="info-list">
-      <strong>{title}</strong>
+    <div className="card">
+      <div className="card-header">
+        <h2>Daily check-in</h2>
+        <p>Log your mood, energy, and what happened today</p>
+      </div>
+      <form onSubmit={onSubmit} className="form-grid">
+        <div className="field">
+          <label htmlFor="exam" className="field-label">Exam focus</label>
+          <input
+            id="exam"
+            className="field-input"
+            value={form.exam}
+            onChange={(e) => onUpdate('exam', e.target.value)}
+            placeholder="NEET, JEE, CUET, CAT, GATE, UPSC..."
+            maxLength={80}
+            required
+          />
+        </div>
+
+        <div className="slider-group">
+          <SliderField id="mood" label="Mood" value={form.mood} onChange={(v) => onUpdate('mood', v)} />
+          <SliderField id="energy" label="Energy" value={form.energy} onChange={(v) => onUpdate('energy', v)} />
+          <div className="slider-field">
+            <div className="slider-top">
+              <span className="slider-label">Sleep</span>
+              <span className="slider-value">{form.sleepHours}h</span>
+            </div>
+            <input
+              type="range" min="0" max="16" step="0.5"
+              value={form.sleepHours}
+              onChange={(e) => onUpdate('sleepHours', Number(e.target.value))}
+              aria-label="Sleep hours"
+            />
+          </div>
+        </div>
+
+        <div className="field">
+          <label htmlFor="journal" className="field-label">Journal</label>
+          <textarea
+            id="journal"
+            className="field-input"
+            value={form.journal}
+            onChange={(e) => onUpdate('journal', e.target.value)}
+            placeholder="Write about study pressure, sleep, distractions, confidence, family expectations, or anything that affected your day."
+            minLength={30}
+            maxLength={4000}
+            required
+          />
+        </div>
+
+        <button type="submit" className="btn btn-primary" disabled={loading}>
+          {loading ? <><span className="spinner" /> Analyzing...</> : 'Analyze check-in'}
+        </button>
+      </form>
+      {error && <p className="alert alert-warn">{error}</p>}
+      {crisis && <p className="alert alert-crisis">{crisis}</p>}
+    </div>
+  );
+}
+
+function SliderField({ id, label, value, onChange }) {
+  return (
+    <div className="slider-field">
+      <div className="slider-top">
+        <span className="slider-label">{label}</span>
+        <span className="slider-value">{value}</span>
+      </div>
+      <input
+        type="range" min="1" max="10"
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        aria-label={`${label} level`}
+      />
+    </div>
+  );
+}
+
+function InsightsTab({ entries, activeEntry, trend, suggestions, suggestLoading, onSelect, onSuggest }) {
+  if (!entries.length) {
+    return (
+      <div className="card">
+        <div className="empty-state">
+          <div className="empty-icon" aria-hidden="true">&#x1f4d3;</div>
+          <h3>No check-ins yet</h3>
+          <p>Complete your first daily check-in to see personalized insights and interactive charts here.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {trend && (
+        <div className="trend-bar">
+          <div className="trend-stat"><strong>{trend.count}</strong> logs</div>
+          <div className="trend-stat"><strong>{trend.avgMood}</strong> avg mood</div>
+          <div className="trend-stat"><strong>{trend.avgEnergy}</strong> avg energy</div>
+          <div className="trend-stat"><strong>{trend.avgSleep}h</strong> avg sleep</div>
+        </div>
+      )}
+
+      {entries.length >= 2 && (
+        <div className="charts-grid">
+          <MoodEnergyChart entries={entries} />
+          <SleepChart entries={entries} />
+          {entries.length >= 3 && <StressDonut entries={entries} />}
+        </div>
+      )}
+
+      <div className="suggest-panel">
+        <div className="card">
+          <div className="card-header">
+            <h2>AI scheduling suggestions</h2>
+            <p>Get personalized study and wellness advice based on your journal patterns</p>
+          </div>
+          {!suggestions ? (
+            <button
+              type="button"
+              className="btn btn-ghost suggest-trigger"
+              onClick={onSuggest}
+              disabled={suggestLoading}
+            >
+              {suggestLoading
+                ? <><span className="spinner" /> Generating suggestions...</>
+                : <><span aria-hidden="true">&#x2728;</span> Get AI suggestions</>
+              }
+            </button>
+          ) : (
+            <SuggestResult data={suggestions} onRefresh={onSuggest} loading={suggestLoading} />
+          )}
+        </div>
+      </div>
+
+      {activeEntry && (
+        <div className="card">
+          <div className="card-header">
+            <h2>Latest analysis</h2>
+          </div>
+          <div className="analysis">
+            <div>
+              <span className={`stress-indicator ${stressClass(activeEntry.analysis.stressLevel)}`}>
+                {activeEntry.analysis.stressLevel} stress
+              </span>
+            </div>
+            <p className="analysis-summary">{activeEntry.analysis.summary}</p>
+            <AnalysisSection title="Hidden triggers" items={activeEntry.analysis.hiddenTriggers} />
+            <AnalysisSection title="Emotional patterns" items={activeEntry.analysis.emotionalPatterns} />
+            <AnalysisSection title="Coping strategies" items={activeEntry.analysis.copingStrategies} />
+            <div className="mindfulness-block">
+              <strong>Mindfulness reset</strong>
+              <p>{activeEntry.analysis.mindfulnessExercise}</p>
+            </div>
+            <p className="encouragement">{activeEntry.analysis.encouragement}</p>
+            <p className="follow-up">{activeEntry.analysis.followUpQuestion}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="card-header">
+          <h2>History</h2>
+        </div>
+        <div className="history-list">
+          {entries.map((entry) => (
+            <button
+              key={entry.id}
+              className="history-item"
+              data-active={activeEntry?.id === entry.id}
+              onClick={() => onSelect(entry)}
+            >
+              <div className="history-item-left">
+                <span className="history-exam">{entry.exam}</span>
+                <span className="history-meta">
+                  Mood {entry.mood} / Energy {entry.energy} / {entry.sleepHours}h sleep
+                  {entry.createdAt && ` · ${formatDate(entry.createdAt)}`}
+                </span>
+              </div>
+              {entry.analysis && (
+                <span className={`history-stress ${stressClass(entry.analysis.stressLevel)}`}>
+                  {entry.analysis.stressLevel}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function SuggestResult({ data, onRefresh, loading }) {
+  return (
+    <div className="suggest-result">
+      {data.weeklyFocus && <div className="suggest-focus">{data.weeklyFocus}</div>}
+      <SuggestSection title="Schedule suggestions" items={data.schedule} />
+      <SuggestSection title="Study tips" items={data.studyTips} />
+      <SuggestSection title="Wellness actions" items={data.wellnessActions} />
+      <button type="button" className="btn btn-ghost" onClick={onRefresh} disabled={loading} style={{ marginTop: 8 }}>
+        {loading ? <><span className="spinner" /> Refreshing...</> : 'Refresh suggestions'}
+      </button>
+    </div>
+  );
+}
+
+function SuggestSection({ title, items }) {
+  if (!items?.length) return null;
+  return (
+    <div className="suggest-section">
+      <h4>{title}</h4>
       <ul>
-        {(items || []).map((item) => (
-          <li key={item}>{item}</li>
-        ))}
+        {items.map((item) => <li key={item}>{item}</li>)}
       </ul>
+    </div>
+  );
+}
+
+function AnalysisSection({ title, items }) {
+  if (!items?.length) return null;
+  return (
+    <div className="analysis-section">
+      <h3>{title}</h3>
+      <ul>
+        {items.map((item) => <li key={item}>{item}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function ChatTab({ chatLog, chatText, chatLoading, error, chatEndRef, onTextChange, onSubmit }) {
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h2>Wellness companion</h2>
+        <p>Ask for a study break plan, a confidence reset, or help naming a stress trigger</p>
+      </div>
+      <div className="chat-container">
+        <div className="chat-messages" aria-live="polite">
+          {chatLog.length === 0 && (
+            <div className="empty-state">
+              <div className="empty-icon" aria-hidden="true">&#x1f4ac;</div>
+              <h3>Start a conversation</h3>
+              <p>Your companion uses your recent check-ins for context.</p>
+            </div>
+          )}
+          {chatLog.map((msg, i) => (
+            <div key={`${msg.role}-${i}`} className={`chat-bubble chat-bubble-${msg.role}`}>
+              {msg.text}
+            </div>
+          ))}
+          {chatLoading && (
+            <div className="chat-bubble chat-bubble-companion">
+              <span className="spinner" />
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+        <form onSubmit={onSubmit} className="chat-input-row">
+          <input
+            className="field-input"
+            value={chatText}
+            onChange={(e) => onTextChange(e.target.value)}
+            placeholder="What do you need right now?"
+            maxLength={1200}
+          />
+          <button type="submit" className="btn btn-primary" disabled={chatLoading}>Send</button>
+        </form>
+        {error && <p className="alert alert-warn">{error}</p>}
+      </div>
     </div>
   );
 }

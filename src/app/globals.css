@@ -78,7 +78,8 @@ button:disabled {
 .journal-composer,
 .entry-card,
 .chat-panel,
-.guestbook-form {
+.guestbook-form,
+.graph-section {
   background: color-mix(in srgb, var(--panel) 96%, transparent);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -374,7 +375,8 @@ button:disabled {
 
 .journal-composer,
 .chat-panel,
-.guestbook-form {
+.guestbook-form,
+.graph-section {
   padding: 22px;
 }
 
@@ -550,6 +552,115 @@ input[type="range"] {
   color: var(--ink);
 }
 
+.graph-section {
+  display: grid;
+  gap: 16px;
+}
+
+.graph-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.graph-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.graph-legend i {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+}
+
+.legend-core {
+  background: var(--ink);
+}
+
+.legend-entry {
+  background: var(--panel);
+  border: 2px solid var(--brand);
+}
+
+.legend-insight {
+  background: var(--gold);
+  border: 2px solid var(--ink);
+}
+
+.graph-canvas-panel {
+  position: relative;
+  min-height: 620px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--line) 45%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--line) 45%, transparent) 1px, transparent 1px),
+    radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--brand) 10%, transparent), transparent 42%),
+    var(--paper);
+  background-size: 36px 36px, 36px 36px, 100% 100%, auto;
+}
+
+.graph-canvas {
+  display: block;
+  width: 100%;
+  min-height: 620px;
+  cursor: crosshair;
+}
+
+.graph-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+}
+
+.graph-tooltip {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  width: min(360px, calc(100% - 36px));
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  box-shadow: var(--shadow);
+}
+
+.graph-tooltip strong,
+.graph-tooltip span {
+  display: block;
+}
+
+.graph-tooltip strong {
+  margin-bottom: 4px;
+}
+
+.graph-tooltip span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .chat-panel {
   min-height: 680px;
   display: grid;
@@ -689,7 +800,8 @@ input[type="range"] {
   }
 
   .topbar,
-  .onboarding {
+  .onboarding,
+  .graph-heading {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -711,5 +823,10 @@ input[type="range"] {
   .guestbook-wall {
     grid-template-columns: 1fr;
     padding: 16px;
+  }
+
+  .graph-canvas-panel,
+  .graph-canvas {
+    min-height: 520px;
   }
 }

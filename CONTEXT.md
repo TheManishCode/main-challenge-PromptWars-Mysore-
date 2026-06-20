@@ -6,7 +6,7 @@ This file tracks the active context, implementation state, and verification logs
 
 Build a Generative AI-powered solution that helps students monitor and improve their mental well-being during high-stakes board exams and competitive entrance tests such as NEET, JEE, CUET, CAT, GATE, and UPSC.
 
-The current product direction is a private journal plus AI companion: authenticated users write daily entries, invoke per-entry AI suggestion bubbles, chat with a companion that has their full journal history as context, and leave notes on a shared handwritten guestbook wall.
+The current product direction is a private journal plus AI companion: authenticated users write daily entries, invoke per-entry AI suggestion bubbles, inspect a canvas graph map of their journal/insight connections, chat with a companion that has their full journal history as context, and leave notes on a shared handwritten guestbook wall.
 
 ## Current Implementation
 
@@ -34,6 +34,7 @@ The current product direction is a private journal plus AI companion: authentica
 - Invoke Suggestions: `POST /api/entries/[id]/insights` generates saved speech-bubble insight cards for one journal entry.
 - Insight taxonomy: `Mood`, `Pattern`, `Suggestion`, `Highlight`, each with a fixed accent color.
 - Bubble UI: diagonal corner tags, speech-bubble tails, variable height, and CSS masonry columns.
+- Map: canvas-based graph view draws journal history, entries, and generated insight bubbles as connected hoverable nodes.
 - Chat: `POST /api/chat` stores messages in a chat thread and calls Gemini with the user's complete available journal history, including decrypted journal text, as server-side context.
 - Guestbook: `GET/POST /api/guestbook` powers a shared authenticated note wall with stored rotation, scale, offset, and note color for stable scattered layout.
 - Theme: light/dark toggle implemented through CSS variables.
@@ -79,6 +80,7 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - [x] Harden Gemini journal analysis schema so partial structured output is normalized instead of failing with "No object generated".
 - [x] Add product-grade journal, chat, guestbook, onboarding, and navigation shell.
 - [x] Add per-entry AI insight bubbles with fixed taxonomy and masonry speech-bubble UI.
+- [x] Add canvas graph map for journal entries and insight relationships.
 - [x] Add chat thread/message persistence and full-journal context for companion chat.
 - [x] Add authenticated shared guestbook with handwritten scattered note wall.
 - [x] Update README and `.env.example` to match auth-first architecture.
@@ -107,8 +109,8 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - `api/entries/[id]/insights/route.js`: New per-entry AI insight generation endpoint.
 - `api/guestbook/route.js`: New shared authenticated guestbook API.
 - `api/chat/route.js`: Now stores chat messages and sends complete available journal history to Gemini.
-- `page.js`: Complete product rebuild with auth setup state, onboarding, journal, chat, guestbook, and theme toggle.
+- `page.js`: Complete product rebuild with auth setup state, onboarding, journal, canvas map, chat, guestbook, and theme toggle.
 - `page.js`: Auth screen includes tester login button that creates a standalone tester session, plus a tester profile menu with sign-out.
 - `api/tester/route.js`: Creates and clears a signed HttpOnly tester session cookie.
-- `globals.css`: Complete visual redesign with light/dark tokens, masonry insight bubbles, and handwritten guestbook wall.
+- `globals.css`: Complete visual redesign with light/dark tokens, canvas graph map, masonry insight bubbles, and handwritten guestbook wall.
 - `lib/tester-session.js`: Signs and verifies standalone tester sessions without storing evaluator credentials or calling Clerk.

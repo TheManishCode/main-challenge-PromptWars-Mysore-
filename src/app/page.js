@@ -7,6 +7,7 @@ const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
 const SECTIONS = [
   { id: 'journal', label: 'Journal' },
+  { id: 'map', label: 'Map' },
   { id: 'chat', label: 'Chat' },
   { id: 'guestbook', label: 'Guestbook' }
 ];
@@ -280,6 +281,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
           onInvoke={invokeInsights}
         />
       )}
+      {section === 'map' && <GraphMapSection entries={entries} />}
       {section === 'chat' && (
         <ChatSection
           chatLog={chatLog}
@@ -300,6 +302,256 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
         />
       )}
     </main>
+  );
+}
+
+function buildGraph(entries) {
+  const nodes = [
+    {
+      id: 'center',
+      type: 'core',
+      label: 'Journal history',
+      detail: `${entries.length} saved ${entries.length === 1 ? 'entry' : 'entries'}`,
+      radius: 30
+    }
+  ];
+  const edges = [];
+
+  entries.forEach((entry, entryIndex) => {
+    const entryNodeId = `entry-${entry.id}`;
+    nodes.push({
+      id: entryNodeId,
+      type: 'entry',
+      label: entry.exam || 'Journal entry',
+      detail: `${formatDate(entry.createdAt)} · mood ${entry.mood} · ${entry.analysis?.stressLevel || 'new'}`,
+      radius: 23,
+      entryIndex,
+      mood: Number(entry.mood) || 5,
+      stressLevel: entry.analysis?.stressLevel || 'new'
+    });
+    edges.push({ from: 'center', to: entryNodeId, type: 'entry' });
+
+    (entry.insightBubbles || []).forEach((bubble, bubbleIndex) => {
+      const bubbleNodeId = `insight-${entry.id}-${bubble.id || bubbleIndex}`;
+      nodes.push({
+        id: bubbleNodeId,
+        type: 'insight',
+        label: bubble.category || 'Insight',
+        detail: bubble.text,
+        radius: 15,
+        entryIndex,
+        bubbleIndex,
+        accent: bubble.accent
+      });
+      edges.push({ from: entryNodeId, to: bubbleNodeId, type: 'insight' });
+    });
+  });
+
+  return { nodes, edges };
+}
+
+function GraphMapSection({ entries }) {
+  const canvasRef = useRef(null);
+  const panelRef = useRef(null);
+  const renderedNodesRef = useRef([]);
+  const [hoveredNode, setHoveredNode] = useState(null);
+  const graph = useMemo(() => buildGraph(entries), [entries]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const panel = panelRef.current;
+    if (!canvas || !panel) return undefined;
+    const context = canvas.getContext('2d');
+    let animationFrame = 0;
+
+    function cssVar(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function positionNodes(width, height) {
+      const center = { x: width / 2, y: height / 2 };
+      const entryNodes = graph.nodes.filter((node) => node.type === 'entry');
+      const rendered = graph.nodes.map((node) => ({ ...node, x: center.x, y: center.y }));
+      const byId = new Map(rendered.map((node) => [node.id, node]));
+      const ringRadius = Math.min(width, height) * (entryNodes.length > 3 ? 0.31 : 0.25);
+
+      entryNodes.forEach((node, index) => {
+        const angle = -Math.PI / 2 + (Math.PI * 2 * index) / Math.max(entryNodes.length, 1);
+        const wave = index % 2 === 0 ? 18 : -12;
+        const target = byId.get(node.id);
+        target.x = center.x + Math.cos(angle) * (ringRadius + wave);
+        target.y = center.y + Math.sin(angle) * (ringRadius + wave);
+
+        const childNodes = rendered.filter((child) => child.type === 'insight' && child.entryIndex === node.entryIndex);
+        childNodes.forEach((child, childIndex) => {
+          const childAngle = angle + (childIndex - (childNodes.length - 1) / 2) * 0.38;
+          const childRadius = 84 + childIndex * 8;
+          child.x = target.x + Math.cos(childAngle) * childRadius;
+          child.y = target.y + Math.sin(childAngle) * childRadius;
+        });
+      });
+
+      return rendered.map((node) => ({
+        ...node,
+        x: Math.max(node.radius + 18, Math.min(width - node.radius - 18, node.x)),
+        y: Math.max(node.radius + 18, Math.min(height - node.radius - 18, node.y))
+      }));
+    }
+
+    function wrapText(text, maxWidth) {
+      const words = String(text || '').split(/\s+/).filter(Boolean);
+      const lines = [];
+      let line = '';
+      words.forEach((word) => {
+        const next = line ? `${line} ${word}` : word;
+        if (context.measureText(next).width > maxWidth && line) {
+          lines.push(line);
+          line = word;
+        } else {
+          line = next;
+        }
+      });
+      if (line) lines.push(line);
+      return lines.slice(0, 2);
+    }
+
+    function draw() {
+      const rect = panel.getBoundingClientRect();
+      const pixelRatio = window.devicePixelRatio || 1;
+      const width = Math.max(320, rect.width);
+      const height = Math.max(420, rect.height);
+      canvas.width = Math.round(width * pixelRatio);
+      canvas.height = Math.round(height * pixelRatio);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      context.clearRect(0, 0, width, height);
+
+      const colors = {
+        panel: cssVar('--panel') || '#ffffff',
+        ink: cssVar('--ink') || '#25211d',
+        muted: cssVar('--muted') || '#726b62',
+        line: cssVar('--line') || '#d8cabc',
+        brand: cssVar('--brand') || '#2f6f73',
+        accent: cssVar('--accent') || '#e45d4f',
+        gold: cssVar('--gold') || '#d89b2b',
+        green: cssVar('--green') || '#4b8f63'
+      };
+
+      const rendered = positionNodes(width, height);
+      const byId = new Map(rendered.map((node) => [node.id, node]));
+      renderedNodesRef.current = rendered;
+
+      context.save();
+      context.lineCap = 'round';
+      graph.edges.forEach((edge) => {
+        const from = byId.get(edge.from);
+        const to = byId.get(edge.to);
+        if (!from || !to) return;
+        context.beginPath();
+        context.moveTo(from.x, from.y);
+        context.lineTo(to.x, to.y);
+        context.strokeStyle = edge.type === 'insight' ? colors.line : colors.brand;
+        context.globalAlpha = edge.type === 'insight' ? 0.55 : 0.72;
+        context.lineWidth = edge.type === 'insight' ? 1.5 : 2.5;
+        context.stroke();
+      });
+      context.restore();
+
+      rendered.forEach((node) => {
+        const isHovered = hoveredNode?.id === node.id;
+        const fill = node.type === 'core'
+          ? colors.ink
+          : node.type === 'entry'
+            ? colors.panel
+            : node.accent || colors.gold;
+        const stroke = node.type === 'core' ? colors.ink : node.type === 'entry' ? colors.brand : colors.ink;
+
+        context.save();
+        context.beginPath();
+        context.arc(node.x, node.y, node.radius + (isHovered ? 5 : 0), 0, Math.PI * 2);
+        context.fillStyle = fill;
+        context.shadowColor = 'rgba(37, 33, 29, 0.18)';
+        context.shadowBlur = isHovered ? 24 : 14;
+        context.shadowOffsetY = 8;
+        context.fill();
+        context.shadowColor = 'transparent';
+        context.lineWidth = node.type === 'insight' ? 3 : 2;
+        context.strokeStyle = stroke;
+        context.stroke();
+
+        context.fillStyle = node.type === 'core' || node.type === 'insight' ? '#fffdf8' : colors.ink;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.font = node.type === 'insight' ? '700 11px Inter, sans-serif' : '800 12px Inter, sans-serif';
+        const label = node.type === 'insight' ? node.label.slice(0, 1) : node.label;
+        const lines = node.type === 'insight' ? [label] : wrapText(label, node.radius * 2.4);
+        lines.forEach((line, index) => {
+          context.fillText(line, node.x, node.y + (index - (lines.length - 1) / 2) * 13);
+        });
+        context.restore();
+      });
+    }
+
+    function scheduleDraw() {
+      cancelAnimationFrame(animationFrame);
+      animationFrame = requestAnimationFrame(draw);
+    }
+
+    const observer = new ResizeObserver(scheduleDraw);
+    observer.observe(panel);
+    scheduleDraw();
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      observer.disconnect();
+    };
+  }, [graph, hoveredNode]);
+
+  function handlePointerMove(event) {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const nearest = renderedNodesRef.current.find((node) => {
+      const distance = Math.hypot(node.x - x, node.y - y);
+      return distance <= node.radius + 8;
+    });
+    setHoveredNode(nearest || null);
+  }
+
+  return (
+    <section className="graph-section">
+      <div className="section-heading graph-heading">
+        <div>
+          <p className="eyebrow">Canvas map</p>
+          <h2>Trace the shape of your journal</h2>
+        </div>
+        <div className="graph-legend" aria-label="Graph legend">
+          <span><i className="legend-core" />History</span>
+          <span><i className="legend-entry" />Entry</span>
+          <span><i className="legend-insight" />Insight</span>
+        </div>
+      </div>
+      <div className="graph-canvas-panel" ref={panelRef}>
+        <canvas
+          ref={canvasRef}
+          className="graph-canvas"
+          aria-label="Journal graph map"
+          onPointerMove={handlePointerMove}
+          onPointerLeave={() => setHoveredNode(null)}
+        />
+        {!entries.length && (
+          <div className="graph-empty">
+            <EmptyState title="No graph yet" text="Save a journal entry and this canvas will map its mood, stress signal, and generated suggestions." />
+          </div>
+        )}
+        {hoveredNode && (
+          <div className="graph-tooltip">
+            <strong>{hoveredNode.label}</strong>
+            <span>{hoveredNode.detail}</span>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

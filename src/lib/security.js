@@ -10,8 +10,10 @@ export function assertSameOrigin(request) {
   const origin = request.headers.get('origin');
   if (!origin) return;
 
-  const requestOrigin = new URL(request.url).origin;
-  if (origin === requestOrigin) return;
+  if (request.url) {
+    const requestOrigin = new URL(request.url).origin;
+    if (origin === requestOrigin) return;
+  }
 
   const expected = getAppOrigin();
   if (!expected) {

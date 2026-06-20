@@ -12,10 +12,10 @@ The current product direction is a private journal plus AI companion: authentica
 
 - Next.js 16 App Router project under `main_challenge/`.
 - Vercel config present in `vercel.json` (Mumbai region `bom1`, 30-second function timeout, cron at 02:00 UTC).
-- Auth-first product shell in `src/app/page.js`: users must sign up or log in before app access. There is no guest mode.
-- Auth screen includes a Clerk-backed tester login button for `manishp.dev@gmail.com` / `Test_key01`; it signs in through Clerk and does not bypass auth.
-- Clerk is the only auth provider. `src/app/layout.js` conditionally mounts `ClerkProvider`; `src/proxy.js` protects `/api/*` with Clerk when Clerk env vars are configured.
-- `getActor()` in `src/lib/auth.js` requires Clerk and returns hashed `storageKey = SHA256(userId)` plus `sessionKey = SHA256(sessionId || userId)`.
+- Auth-first product shell in `src/app/page.js`: users must sign up/log in or use the tester login before app access.
+- Auth screen includes a tester login button that creates a short-lived signed HttpOnly tester cookie through `POST /api/tester`; no credentials are exposed in the frontend.
+- Clerk is the primary auth provider. `src/app/layout.js` conditionally mounts `ClerkProvider`; `src/proxy.js` provides Clerk request context while API authorization is enforced in `getActor()`.
+- `getActor()` accepts either Clerk auth or a valid signed tester session and returns hashed `storageKey`/`sessionKey` values.
 - If Clerk env vars are missing, the page shows an authentication setup screen instead of granting access.
 - Gemini integration is server-side only through Vercel AI SDK and `@ai-sdk/google` in `src/lib/gemini.js`.
 - Persistence uses Postgres through `DATABASE_URL` in production. The schema auto-initializes on first DB connection.
@@ -28,8 +28,8 @@ The current product direction is a private journal plus AI companion: authentica
 
 ## Product Surface
 
-- Auth: Clerk sign-in/sign-up first screen, plus first-run onboarding after signup.
-- Tester login: one-click Clerk sign-in with the configured evaluator account credentials displayed on the auth screen.
+- Auth: Clerk sign-in/sign-up first screen, tester login, plus first-run onboarding.
+- Tester login: one-click signed HttpOnly tester session, scoped and tamper-resistant, with no visible credentials.
 - Journal: mood, energy, sleep, exam focus, encrypted journal entry, Gemini analysis summary, and history.
 - Invoke Suggestions: `POST /api/entries/[id]/insights` generates saved speech-bubble insight cards for one journal entry.
 - Insight taxonomy: `Mood`, `Pattern`, `Suggestion`, `Highlight`, each with a fixed accent color.
@@ -73,8 +73,9 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - [x] Add Postgres persistence boundary with in-memory local development adapter.
 - [x] Add validation, crisis detection, same-origin checks, and rate limiting.
 - [x] Add Clerk auth, AES-GCM journal encryption, Upstash rate limiting, and Vercel Cron hook.
-- [x] Remove anonymous tester/dev-session access and require auth before app/API access.
-- [x] Add Clerk-backed tester login credentials to the auth screen.
+- [x] Remove anonymous dev-session access and require Clerk auth or a signed tester session before app/API access.
+- [x] Add tester login without exposing credentials in the frontend.
+- [x] Harden Gemini journal analysis schema so partial structured output is normalized instead of failing with "No object generated".
 - [x] Add product-grade journal, chat, guestbook, onboarding, and navigation shell.
 - [x] Add per-entry AI insight bubbles with fixed taxonomy and masonry speech-bubble UI.
 - [x] Add chat thread/message persistence and full-journal context for companion chat.
@@ -84,30 +85,28 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 ## Verification Logs
 
 - Last Run Verification: 2026-06-20
-- Status: Passed for lint, tests, build, and runtime page probe.
+- Status: Passed for lint, tests, and build after AI schema hardening.
 - Commands:
   - `npm run lint`
-  - `npm run test`
-  - `npm run build`
-  - `curl.exe -I --max-time 20 http://127.0.0.1:3001/`
+  - `npm.cmd run test`
+  - `npm.cmd run build`
 - Results:
   - ESLint passed.
   - Vitest passed: 6 test files, 44 tests.
   - `next build` passed.
-  - Runtime probe returned `HTTP/1.1 200 OK` for `/`.
-  - Routes: `/`, `/api/chat`, `/api/cron/patterns`, `/api/entries`, `/api/entries/[id]/insights`, `/api/guestbook`, `/api/suggest`.
+  - Routes include `/api/tester`, `/api/entries`, `/api/entries/[id]/insights`, `/api/chat`, `/api/guestbook`, and the additional wellness APIs.
 
 ## Major Rebuild (2026-06-20)
 
-- `auth.js`: Clerk-only actor resolution; removed tester cookie and anonymous dev-session fallback.
-- `proxy.js`: Clerk protects `/api/*`; page HTML can render the auth gate without middleware hangs.
+- `auth.js`: Actor resolution accepts Clerk users or signed tester sessions; anonymous dev-session fallback remains removed.
+- `proxy.js`: Provides Clerk request context without blocking signed tester-cookie API requests.
 - `db.js`: Added `journal_insights`, `chat_threads`, `chat_messages`, and `guestbook_posts` persistence plus in-memory dev adapters.
-- `gemini.js`: Added `generateEntryInsights(entry)` and expanded `chatWithCompanion()` to use full journal context.
+- `gemini.js`: Added `generateEntryInsights(entry)`, expanded `chatWithCompanion()` to use full journal context, and normalized journal analysis fields so strict AI schema mismatches do not break entry creation.
 - `validation.js`: Added `entryInsightSchema` and `guestbookSchema`.
 - `api/entries/[id]/insights/route.js`: New per-entry AI insight generation endpoint.
 - `api/guestbook/route.js`: New shared authenticated guestbook API.
 - `api/chat/route.js`: Now stores chat messages and sends complete available journal history to Gemini.
 - `page.js`: Complete product rebuild with auth setup state, onboarding, journal, chat, guestbook, and theme toggle.
-- `page.js`: Auth screen includes displayed test credentials and one-click tester sign-in via Clerk `useSignIn`.
+- `page.js`: Auth screen includes tester login button with no displayed credentials.
 - `globals.css`: Complete visual redesign with light/dark tokens, masonry insight bubbles, and handwritten guestbook wall.
-- Removed `api/tester/route.js`, `components/TesterButton.js`, and `lib/session.js`.
+- Removed `components/TesterButton.js` and `lib/session.js`; `api/tester/route.js` now issues the signed tester cookie.

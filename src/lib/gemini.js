@@ -10,22 +10,22 @@ import { buildSafetyInstruction } from './safety';
 const analysisSchema = z.object({
   summary: z.string().min(8),
   stressLevel: z.enum(['low', 'moderate', 'high']),
-  sentimentScore: z.number().min(-1).max(1),
-  emotionalIntensity: z.number().min(1).max(10),
-  anxietyIndicators: z.array(z.string().min(2)).max(8),
-  burnoutIndicators: z.array(z.string().min(2)).max(8),
-  selfDoubtIndicators: z.array(z.string().min(2)).max(6),
-  motivationPatterns: z.array(z.string().min(2)).max(6),
-  academicPressure: z.enum(['low', 'moderate', 'high', 'severe']),
-  stressTriggers: z.array(z.string().min(2)).max(6),
-  positiveTriggers: z.array(z.string().min(2)).max(6),
-  riskFactors: z.array(z.string().min(2)).max(6),
-  recoverySuggestions: z.array(z.string().min(2)).max(6),
-  burnoutRiskScore: z.number().min(0).max(100),
-  wellnessScore: z.number().min(0).max(100),
-  hiddenTriggers: z.array(z.string().min(2)).max(8),
-  emotionalPatterns: z.array(z.string().min(2)).max(8),
-  copingStrategies: z.array(z.string().min(2)).min(2).max(6),
+  sentimentScore: z.number().min(-1).max(1).optional(),
+  emotionalIntensity: z.number().min(1).max(10).optional(),
+  anxietyIndicators: z.array(z.string()).optional(),
+  burnoutIndicators: z.array(z.string()).optional(),
+  selfDoubtIndicators: z.array(z.string()).optional(),
+  motivationPatterns: z.array(z.string()).optional(),
+  academicPressure: z.enum(['low', 'moderate', 'high', 'severe']).optional(),
+  stressTriggers: z.array(z.string()).optional(),
+  positiveTriggers: z.array(z.string()).optional(),
+  riskFactors: z.array(z.string()).optional(),
+  recoverySuggestions: z.array(z.string()).optional(),
+  burnoutRiskScore: z.number().min(0).max(100).optional(),
+  wellnessScore: z.number().min(0).max(100).optional(),
+  hiddenTriggers: z.array(z.string()).optional(),
+  emotionalPatterns: z.array(z.string()).optional(),
+  copingStrategies: z.array(z.string()).optional(),
   mindfulnessExercise: z.string().min(8),
   encouragement: z.string().min(8),
   followUpQuestion: z.string().min(8)
@@ -34,14 +34,14 @@ const analysisSchema = z.object({
 const insightBubbleSchema = z.object({
   insights: z.array(z.object({
     category: z.enum(['Mood', 'Pattern', 'Suggestion', 'Highlight']),
-    text: z.string().min(8).max(700)
-  })).min(2).max(5)
+    text: z.string().min(4).max(700)
+  })).min(1).max(5)
 });
 
 const suggestionsSchema = z.object({
-  schedule: z.array(z.string().min(4)).min(2).max(6),
-  studyTips: z.array(z.string().min(4)).min(2).max(6),
-  wellnessActions: z.array(z.string().min(4)).min(2).max(6),
+  schedule: z.array(z.string()).min(1).max(6),
+  studyTips: z.array(z.string()).min(1).max(6),
+  wellnessActions: z.array(z.string()).min(1).max(6),
   weeklyFocus: z.string().min(8)
 });
 
@@ -107,6 +107,49 @@ const INSIGHT_ACCENTS = {
   Highlight: '#6fa65f'
 };
 
+function boundedNumber(value, fallback, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function asList(value, fallback = []) {
+  if (!Array.isArray(value)) return fallback;
+  return value.filter((item) => typeof item === 'string' && item.trim()).slice(0, 8);
+}
+
+function normalizeAnalysis(analysis, input) {
+  const stress = boundedNumber(input.stress, 5, 1, 10);
+  const anxiety = boundedNumber(input.anxiety, 5, 1, 10);
+  const mood = boundedNumber(input.mood, 5, 1, 10);
+  const sleep = boundedNumber(input.sleepHours, 7, 0, 16);
+  const inferredBurnout = boundedNumber((stress * 6) + (anxiety * 4) + Math.max(0, 7 - sleep) * 5, 35, 0, 100);
+  const inferredWellness = boundedNumber((mood * 7) + (sleep >= 7 ? 20 : sleep * 2), 65, 0, 100);
+
+  return {
+    ...analysis,
+    sentimentScore: boundedNumber(analysis.sentimentScore, (mood - 5) / 5, -1, 1),
+    emotionalIntensity: boundedNumber(analysis.emotionalIntensity, Math.max(stress, anxiety), 1, 10),
+    anxietyIndicators: asList(analysis.anxietyIndicators),
+    burnoutIndicators: asList(analysis.burnoutIndicators),
+    selfDoubtIndicators: asList(analysis.selfDoubtIndicators),
+    motivationPatterns: asList(analysis.motivationPatterns),
+    academicPressure: analysis.academicPressure || (stress >= 8 ? 'high' : stress >= 5 ? 'moderate' : 'low'),
+    stressTriggers: asList(analysis.stressTriggers, asList(analysis.hiddenTriggers)),
+    positiveTriggers: asList(analysis.positiveTriggers),
+    riskFactors: asList(analysis.riskFactors),
+    recoverySuggestions: asList(analysis.recoverySuggestions, asList(analysis.copingStrategies)),
+    burnoutRiskScore: boundedNumber(analysis.burnoutRiskScore, inferredBurnout, 0, 100),
+    wellnessScore: boundedNumber(analysis.wellnessScore, inferredWellness, 0, 100),
+    hiddenTriggers: asList(analysis.hiddenTriggers),
+    emotionalPatterns: asList(analysis.emotionalPatterns),
+    copingStrategies: asList(analysis.copingStrategies, [
+      'Take a short reset break before the next study block.',
+      'Write down the next single task instead of the whole syllabus.'
+    ]).slice(0, 6)
+  };
+}
+
 /* ─── Model ──────────────────────────────────────────────────────────────── */
 
 function getModel() {
@@ -119,7 +162,7 @@ function getModel() {
 /* ─── Entry Analysis ─────────────────────────────────────────────────────── */
 
 export async function analyzeEntry(input) {
-  const prompt = `Analyze this student mood log and journal comprehensively. Return only JSON matching the schema.
+  const prompt = `Analyze this student mood log and journal. Return only JSON matching the schema.
 
 Mood: ${input.mood}/10
 Energy: ${input.energy}/10
@@ -135,20 +178,9 @@ Journal:
 ${input.journal}
 
 Requirements:
-- sentimentScore: -1 (very negative) to 1 (very positive) based on the journal text.
-- emotionalIntensity: 1 (calm) to 10 (extreme) based on language and metrics.
-- anxietyIndicators: specific signs of anxiety from the text and numeric inputs.
-- burnoutIndicators: signs of burnout (exhaustion, detachment, reduced performance).
-- selfDoubtIndicators: signs of imposter syndrome or self-doubt from the text.
-- motivationPatterns: what is driving or draining motivation.
-- academicPressure: assess based on exam, study hours, stress, and journal content.
-- stressTriggers: specific things causing stress (be precise, not generic).
-- positiveTriggers: specific things that helped or felt good.
-- riskFactors: behavioral or emotional risk factors to watch.
-- recoverySuggestions: specific, actionable recovery steps.
-- burnoutRiskScore: 0-100 composite score based on all burnout signals.
-- wellnessScore: 0-100 composite score (higher = healthier).
-- Keep coping strategies specific, short, and immediately usable.
+- Required: summary, stressLevel, mindfulnessExercise, encouragement, followUpQuestion.
+- Optional but useful: hiddenTriggers, emotionalPatterns, copingStrategies, anxietyIndicators, burnoutIndicators, stressTriggers, positiveTriggers, burnoutRiskScore, wellnessScore.
+- Keep arrays short, specific, and grounded in the text.
 - Do not invent events, diagnoses, medical claims, or personal facts.`;
 
   const result = await generateObject({
@@ -163,7 +195,7 @@ Requirements:
     id: randomUUID(),
     createdAt: new Date().toISOString(),
     ...input,
-    analysis: result.object
+    analysis: normalizeAnalysis(result.object, input)
   };
 }
 

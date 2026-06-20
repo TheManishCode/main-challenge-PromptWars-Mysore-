@@ -1,0 +1,32 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# build outputs
+/.next/
+/out/
+/build/
+/coverage/
+
+# local environment and secret material
+.env*
+!.env.example
+*.pem
+
+# local state
+/data/
+
+# vercel
+.vercel
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.next-dev.*.log
+
+# os/editor noise
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts

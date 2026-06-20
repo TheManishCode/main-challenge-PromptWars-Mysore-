@@ -933,6 +933,18 @@ input[type="range"] {
   font-weight: 700;
 }
 
+.voice-interim {
+  margin: -8px 0 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-left: 3px solid var(--accent);
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-style: italic;
+  opacity: 0.8;
+}
+
 /* ─── Relief Room ────────────────────────────────────────────────────────── */
 
 .relief-section {
@@ -1271,68 +1283,69 @@ input[type="range"] {
 .scan-tip { border-left: 3px solid var(--brand); }
 .scan-tip h4 { color: var(--brand-dark); }
 
-/* ─── Voice Chat Bar ─────────────────────────────────────────────────────── */
+/* ─── Mic pill (ChatGPT-style in-input voice button) ────────────────────── */
 
-.voice-chat-bar {
+.chat-input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-input-wrap .input {
+  padding-right: 44px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.mic-pill {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
   display: grid;
-  gap: 8px;
-}
-
-.voice-chat-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 22px;
-  border: 2px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--paper);
-  color: var(--ink);
-  font-size: 0.95rem;
-  font-weight: 700;
+  place-items: center;
   cursor: pointer;
-  transition: border-color 200ms ease, background 200ms ease;
-  width: fit-content;
+  transition: color 180ms ease, background 180ms ease;
+  z-index: 1;
 }
 
-.voice-chat-btn:hover { border-color: var(--brand); }
-
-.voice-chat-btn-active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, var(--paper));
-  color: var(--accent);
+.mic-pill:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--soft);
 }
 
-.voice-chat-hint {
-  margin: 0;
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: var(--accent);
-}
-
-.voice-wave {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 18px;
-}
-
-.voice-wave span {
-  display: inline-block;
-  width: 3px;
-  border-radius: 2px;
+.mic-pill-active {
+  color: #fff;
   background: var(--accent);
-  animation: wave-bar 0.9s ease-in-out infinite;
 }
 
-.voice-wave span:nth-child(1) { height: 6px; animation-delay: 0s; }
-.voice-wave span:nth-child(2) { height: 12px; animation-delay: 0.1s; }
-.voice-wave span:nth-child(3) { height: 18px; animation-delay: 0.2s; }
-.voice-wave span:nth-child(4) { height: 12px; animation-delay: 0.3s; }
-.voice-wave span:nth-child(5) { height: 6px; animation-delay: 0.4s; }
+.mic-pill-active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: mic-ring 1.6s ease-out infinite;
+  z-index: -1;
+}
 
-@keyframes wave-bar {
-  0%, 100% { transform: scaleY(0.5); opacity: 0.6; }
-  50% { transform: scaleY(1); opacity: 1; }
+@keyframes mic-ring {
+  0%   { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+.voice-error-msg {
+  margin: -4px 0 4px;
+  font-size: 0.8rem;
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* ─── Chat thinking dots ─────────────────────────────────────────────────── */

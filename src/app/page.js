@@ -1257,48 +1257,110 @@ function Stat({ label, value, highlight }) {
 
 /* ─── Speech Input Hook ───────────────────────────────────────────────────── */
 
-const noop = () => () => {};
+const noopSubscribe = () => () => {};
 
 function useSpeechInput() {
   const [listening, setListening] = useState(false);
+  const [interim, setInterim] = useState('');
+  const [voiceError, setVoiceError] = useState('');
+
   const supported = useSyncExternalStore(
-    noop,
+    noopSubscribe,
     () => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
     () => false
   );
+
   const recRef = useRef(null);
+  const keepAliveRef = useRef(false);
+  const callbacksRef = useRef({ onResult: null, onEnd: null, continuous: true });
 
   useEffect(() => {
-    return () => { recRef.current?.stop(); };
+    return () => {
+      keepAliveRef.current = false;
+      try { recRef.current?.abort(); } catch {}
+    };
   }, []);
 
-  function start({ continuous = true, onResult, onEnd } = {}) {
-    if (!supported) return;
+  function buildRec() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const rec = new SR();
-    rec.continuous = continuous;
-    rec.interimResults = false;
-    rec.lang = 'en-IN';
+    rec.continuous = callbacksRef.current.continuous;
+    rec.interimResults = true;
+    rec.lang = navigator.language || 'en-US';
+    rec.maxAlternatives = 1;
+
     rec.onresult = (e) => {
-      let text = '';
+      let finalText = '';
+      let interimText = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) text += e.results[i][0].transcript + ' ';
+        if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
+        else interimText += e.results[i][0].transcript;
       }
-      if (text.trim()) onResult?.(text.trim());
+      setInterim(interimText);
+      if (finalText.trim()) {
+        setInterim('');
+        callbacksRef.current.onResult?.(finalText.trim());
+      }
     };
-    rec.onend = () => { setListening(false); onEnd?.(); };
-    rec.onerror = () => setListening(false);
+
+    rec.onend = () => {
+      setInterim('');
+      if (keepAliveRef.current && callbacksRef.current.continuous) {
+        try {
+          const next = buildRec();
+          recRef.current = next;
+          next.start();
+          return;
+        } catch {}
+      }
+      keepAliveRef.current = false;
+      setListening(false);
+      callbacksRef.current.onEnd?.();
+    };
+
+    rec.onerror = (e) => {
+      setInterim('');
+      if (e.error === 'aborted' || e.error === 'no-speech') return;
+      keepAliveRef.current = false;
+      setListening(false);
+      const map = {
+        'not-allowed': 'Microphone access denied — click the 🔒 in your browser bar and allow microphone.',
+        'audio-capture': 'No microphone detected. Please plug one in.',
+        'network': 'Voice needs an internet connection.',
+        'service-not-allowed': 'Voice recognition is blocked in this browser or context.'
+      };
+      setVoiceError(map[e.error] || `Voice error: ${e.error}`);
+    };
+
+    return rec;
+  }
+
+  function start({ continuous = true, onResult, onEnd } = {}) {
+    if (!supported) {
+      setVoiceError('Voice input is not supported in this browser. Try Chrome or Edge.');
+      return;
+    }
+    try { recRef.current?.abort(); } catch {}
+    setVoiceError('');
+    setInterim('');
+    callbacksRef.current = { onResult, onEnd, continuous };
+    keepAliveRef.current = continuous;
+    const rec = buildRec();
     recRef.current = rec;
     rec.start();
     setListening(true);
   }
 
   function stop() {
-    recRef.current?.stop();
+    keepAliveRef.current = false;
+    setInterim('');
     setListening(false);
+    try { recRef.current?.abort(); } catch {}
+    callbacksRef.current.onEnd?.();
+    callbacksRef.current = { onResult: null, onEnd: null, continuous: true };
   }
 
-  return { listening, start, stop, supported };
+  return { listening, interim, voiceError, start, stop, supported };
 }
 
 /* ─── Journal Section ─────────────────────────────────────────────────────── */
@@ -1347,11 +1409,13 @@ function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }
               title={speech.listening ? 'Stop voice input' : 'Tap to dictate'}
               aria-label={speech.listening ? 'Stop dictation' : 'Dictate journal entry'}
             >
-              {speech.listening ? '⏹' : '🎙'}
+              {speech.listening ? <StopIcon /> : <MicIcon />}
             </button>
           )}
         </div>
-        {speech.listening && <p className="voice-hint">Listening... speak naturally. Tap ⏹ to stop.</p>}
+        {speech.interim && <p className="voice-interim">{speech.interim}</p>}
+        {speech.listening && !speech.interim && <p className="voice-hint">Listening… speak naturally. Tap stop when done.</p>}
+        {speech.voiceError && <p className="voice-error-msg">{speech.voiceError}</p>}
         <button className="primary-button" type="submit" disabled={loading === 'entry'}>{loading === 'entry' ? 'Analysing...' : 'Save journal entry'}</button>
       </form>
 
@@ -1417,26 +1481,41 @@ function BubbleMasonry({ bubbles }) {
 
 /* ─── Chat Section ────────────────────────────────────────────────────────── */
 
+function MicIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v7a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm7 9a1 1 0 0 1 1 1 8 8 0 0 1-7 7.94V22a1 1 0 0 1-2 0v-1.06A8 8 0 0 1 4 13a1 1 0 0 1 2 0 6 6 0 0 0 12 0 1 1 0 0 1 1-1z" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <rect x="5" y="5" width="14" height="14" rx="2" />
+    </svg>
+  );
+}
+
 function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit, onSendText }) {
   const speech = useSpeechInput();
-  const capturedRef = useRef('');
+  const resultRef = useRef('');
 
   function handleVoiceToggle() {
     if (speech.listening) { speech.stop(); return; }
-    capturedRef.current = '';
+    resultRef.current = '';
     speech.start({
       continuous: false,
-      onResult: (text) => {
-        capturedRef.current = text;
-        onText(text);
-      },
+      onResult: (text) => { resultRef.current = text; onText(text); },
       onEnd: () => {
-        const captured = capturedRef.current.trim();
-        capturedRef.current = '';
+        const captured = resultRef.current.trim();
+        resultRef.current = '';
         if (captured) onSendText(captured);
       }
     });
   }
+
+  const displayValue = speech.interim || chatText;
 
   return (
     <section className="chat-panel">
@@ -1445,28 +1524,6 @@ function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit,
         <h2>Talk it through</h2>
         <p className="section-subtext muted">Asks questions, listens, and tries to understand you — not lecture you. Type or speak.</p>
       </div>
-
-      {speech.supported && (
-        <div className="voice-chat-bar">
-          <button
-            type="button"
-            className={`voice-chat-btn ${speech.listening ? 'voice-chat-btn-active' : ''}`}
-            onClick={handleVoiceToggle}
-            disabled={loading}
-            aria-label={speech.listening ? 'Stop speaking' : 'Speak to companion'}
-          >
-            {speech.listening ? (
-              <>
-                <span className="voice-wave"><span /><span /><span /><span /><span /></span>
-                Stop speaking
-              </>
-            ) : (
-              <>🎙 Speak to companion</>
-            )}
-          </button>
-          {speech.listening && <p className="voice-chat-hint">Listening... speak clearly. Message sends automatically when you stop.</p>}
-        </div>
-      )}
 
       <div className="chat-feed">
         {!chatLog.length && (
@@ -1481,15 +1538,31 @@ function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit,
         {loading && <div className="chat-line companion thinking-dots"><span /><span /><span /></div>}
         <div ref={chatEndRef} />
       </div>
+
+      {speech.voiceError && <p className="voice-error-msg">{speech.voiceError}</p>}
+
       <form className="chat-form" onSubmit={onSubmit}>
-        <input
-          className="input"
-          value={chatText}
-          onChange={(e) => onText(e.target.value)}
-          placeholder="What's actually going on right now?"
-          maxLength={1200}
-          disabled={speech.listening}
-        />
+        <div className="chat-input-wrap">
+          <input
+            className="input"
+            value={displayValue}
+            onChange={(e) => { if (!speech.listening) onText(e.target.value); }}
+            placeholder={speech.listening ? 'Listening…' : "What's actually going on right now?"}
+            maxLength={1200}
+            readOnly={speech.listening}
+          />
+          {speech.supported && (
+            <button
+              type="button"
+              className={`mic-pill${speech.listening ? ' mic-pill-active' : ''}`}
+              onClick={handleVoiceToggle}
+              disabled={loading}
+              aria-label={speech.listening ? 'Stop voice input' : 'Speak to companion'}
+            >
+              {speech.listening ? <StopIcon /> : <MicIcon />}
+            </button>
+          )}
+        </div>
         <button className="primary-button" type="submit" disabled={loading || speech.listening}>Send</button>
       </form>
     </section>

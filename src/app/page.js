@@ -1285,8 +1285,8 @@ function useSpeechInput() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const rec = new SR();
     rec.continuous = callbacksRef.current.continuous;
-    rec.interimResults = true;
-    rec.lang = navigator.language || 'en-US';
+    rec.interimResults = false;
+    rec.lang = 'en-US';
     rec.maxAlternatives = 1;
 
     rec.onresult = (e) => {

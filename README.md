@@ -8,6 +8,7 @@ MindTrail is the main PromptWars challenge submission for the **Mental Wellness 
 - Vercel AI SDK with the Google provider; Gemini runs server-side only and the API key is never exposed to the browser.
 - Validated journal and chat inputs with bounded lengths and numeric ranges.
 - Clerk authentication in production; local development can run with an anonymous dev session.
+- Each saved journal entry is scoped to a hashed Clerk user id and a hashed Clerk login session id.
 - Postgres persistence through `DATABASE_URL`; production fails honestly if the database is missing.
 - AES-256-GCM encryption for journal text before storage.
 - Upstash-backed rate limiting in production for journal analysis and companion chat routes.
@@ -31,6 +32,7 @@ CLERK_SECRET_KEY=your_clerk_secret_key
 UPSTASH_REDIS_REST_URL=your_upstash_rest_url
 UPSTASH_REDIS_REST_TOKEN=your_upstash_rest_token
 CRON_SECRET=your_random_cron_secret
+SESSION_SECRET=your_random_session_secret
 ```
 
 `GEMINI_MODEL` is optional and defaults to `gemini-2.5-flash`.

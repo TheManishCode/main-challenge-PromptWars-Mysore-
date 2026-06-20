@@ -28,7 +28,7 @@ export async function POST(request) {
     }
 
     const entry = await analyzeEntry(input);
-    const savedEntry = await saveEntry(actor.storageKey, entry);
+    const savedEntry = await saveEntry(actor.storageKey, actor.sessionKey, entry);
     return NextResponse.json({ entry: savedEntry, crisis: null }, { status: 201 });
   } catch (error) {
     return jsonError(error);

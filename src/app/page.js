@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Show, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 
 const initialForm = {
   mood: 5,
@@ -115,17 +114,6 @@ export default function Home() {
           </div>
           <div className="top-actions">
             <div className="status-pill">Exam wellness tracker</div>
-            <Show when="signed-out">
-              <SignInButton mode="modal">
-                <button type="button">Sign in</button>
-              </SignInButton>
-              <SignUpButton mode="modal">
-                <button type="button" className="secondary-button">Sign up</button>
-              </SignUpButton>
-            </Show>
-            <Show when="signed-in">
-              <UserButton />
-            </Show>
           </div>
         </header>
 

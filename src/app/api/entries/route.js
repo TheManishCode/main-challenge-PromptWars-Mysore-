@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { analyzeEntry } from '@/lib/gemini';
-import { saveEntry, listEntries } from '@/lib/db';
+import { saveEntry, listEntries, updateStreak } from '@/lib/db';
 import { getActor } from '@/lib/auth';
-import { crisisResponse, detectCrisis } from '@/lib/safety';
+import { crisisResponse, detectCrisis, getRiskLevel } from '@/lib/safety';
 import { assertSameOrigin, jsonError, rateLimit } from '@/lib/security';
 import { moodSchema, parseJsonBody } from '@/lib/validation';
 
@@ -29,7 +29,19 @@ export async function POST(request) {
 
     const entry = await analyzeEntry(input);
     const savedEntry = await saveEntry(actor.storageKey, actor.sessionKey, entry);
-    return NextResponse.json({ entry: savedEntry, crisis: null }, { status: 201 });
+
+    // Auto-update streaks on journal submission
+    await updateStreak(actor.storageKey, 'journal');
+    await updateStreak(actor.storageKey, 'checkin');
+
+    // Attach risk level from the analysis
+    const riskLevel = getRiskLevel(entry.analysis);
+
+    return NextResponse.json({
+      entry: savedEntry,
+      crisis: null,
+      riskLevel
+    }, { status: 201 });
   } catch (error) {
     return jsonError(error);
   }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { chatWithCompanion } from '@/lib/gemini';
-import { listEntries } from '@/lib/db';
+import { getOrCreateThread, listChatMessages, listEntries, saveChatMessage } from '@/lib/db';
 import { getActor } from '@/lib/auth';
 import { crisisResponse, detectCrisis } from '@/lib/safety';
 import { assertSameOrigin, jsonError, rateLimit } from '@/lib/security';
@@ -17,9 +18,23 @@ export async function POST(request) {
       return NextResponse.json({ reply: crisisResponse().message, crisis: true }, { status: 202 });
     }
 
-    const entries = await listEntries(actor.storageKey, 5);
+    const thread = await getOrCreateThread(actor.storageKey);
+    await saveChatMessage(actor.storageKey, thread.id, {
+      id: randomUUID(),
+      role: 'student',
+      content: message
+    });
+
+    const entries = await listEntries(actor.storageKey, 50, { includeJournal: true });
     const reply = await chatWithCompanion(message, entries);
-    return NextResponse.json({ reply, crisis: false });
+    await saveChatMessage(actor.storageKey, thread.id, {
+      id: randomUUID(),
+      role: 'companion',
+      content: reply
+    });
+    const messages = await listChatMessages(actor.storageKey, thread.id, 30);
+
+    return NextResponse.json({ reply, crisis: false, thread, messages });
   } catch (error) {
     return jsonError(error);
   }

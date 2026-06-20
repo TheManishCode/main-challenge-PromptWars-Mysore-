@@ -1,44 +1,52 @@
-# Main Challenge Context: Mental Wellness Tracker
+# Main Challenge Context: Journal + AI Companion
 
-This file tracks the active context, implementation state, and verification logs for the **PromptWars Main Challenge**.
+This file tracks the active context, implementation state, and verification logs for the PromptWars Main Challenge.
 
 ## Challenge Description
 
 Build a Generative AI-powered solution that helps students monitor and improve their mental well-being during high-stakes board exams and competitive entrance tests such as NEET, JEE, CUET, CAT, GATE, and UPSC.
 
-The solution must analyze open-ended daily journaling and mood logs to uncover hidden stress triggers and emotional patterns that standard trackers miss. It should also use conversational AI to provide contextual wellness support, such as tailored coping strategies, adaptive mindfulness exercises, and motivational encouragement, while acting safely as an empathetic digital companion.
+The current product direction is a private journal plus AI companion: authenticated users write daily entries, invoke per-entry AI suggestion bubbles, chat with a companion that has their full journal history as context, and leave notes on a shared handwritten guestbook wall.
 
 ## Current Implementation
 
 - Next.js 16 App Router project under `main_challenge/`.
 - Vercel config present in `vercel.json` (Mumbai region `bom1`, 30-second function timeout, cron at 02:00 UTC).
-- Gemini integration is server-side only through Vercel AI SDK and `@ai-sdk/google` in `src/lib/gemini.js`. Uses `generateObject` with a Zod schema for structured journal analysis; `generateText` for companion chat.
-- Journal analysis API: `POST /api/entries`, `GET /api/entries`.
-- Companion chat API: `POST /api/chat`.
-- Persistence layer uses Postgres through `DATABASE_URL` in production; schema auto-initializes on first connection.
+- Auth-first product shell in `src/app/page.js`: users must sign up or log in before app access. There is no guest mode.
+- Auth screen includes a Clerk-backed tester login button for `manishp.dev@gmail.com` / `Test_key01`; it signs in through Clerk and does not bypass auth.
+- Clerk is the only auth provider. `src/app/layout.js` conditionally mounts `ClerkProvider`; `src/proxy.js` protects `/api/*` with Clerk when Clerk env vars are configured.
+- `getActor()` in `src/lib/auth.js` requires Clerk and returns hashed `storageKey = SHA256(userId)` plus `sessionKey = SHA256(sessionId || userId)`.
+- If Clerk env vars are missing, the page shows an authentication setup screen instead of granting access.
+- Gemini integration is server-side only through Vercel AI SDK and `@ai-sdk/google` in `src/lib/gemini.js`.
+- Persistence uses Postgres through `DATABASE_URL` in production. The schema auto-initializes on first DB connection.
+- Local development without `DATABASE_URL` uses in-memory adapters, but API access still requires Clerk auth.
 - Journal text is encrypted with AES-256-GCM before storage (`src/lib/crypto.js`).
-- Local development without `DATABASE_URL` uses in-memory `Map` only and does not seed mock data.
-- Production authentication uses Clerk (`src/proxy.js` proxy middleware + `ClerkProvider` in layout) when Clerk env vars are present.
-- `auth()` from Clerk returns both `userId` (stable across logins) and `sessionId` (unique per sign-in). `storageKey = SHA256(userId)`; `sessionKey = SHA256(sessionId)`.
-- Local development falls back to anonymous HttpOnly dev sessions managed by `src/lib/session.js`; session hash uses HMAC-SHA256 keyed with `SESSION_SECRET`.
 - Input validation uses Zod schemas (`src/lib/validation.js`).
-- Safety layer detects crisis language before ordinary model calls; escalates to KIRAN helpline 1800-599-0019 (`src/lib/safety.js`).
+- Safety layer detects crisis language before ordinary model calls and escalates to KIRAN helpline 1800-599-0019 (`src/lib/safety.js`).
 - Security layer includes same-origin write checks and Upstash-backed production rate limiting (`src/lib/security.js`).
 - Vercel Cron hook exists at `/api/cron/patterns` (runs at 02:00 UTC daily).
 
-## Session Architecture
+## Product Surface
 
-### With Clerk (when CLERK_SECRET_KEY + NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY are present)
-- `storageKey = SHA256(userId)` — wellness history persists across all the user's logins.
-- `sessionKey = SHA256(sessionId)` — tracks the specific login session for audit purposes.
-- Each user sees only their own data; no cross-user leakage.
-- Google and GitHub OAuth are configured in the **Clerk dashboard** Social Connections — not via app env vars.
+- Auth: Clerk sign-in/sign-up first screen, plus first-run onboarding after signup.
+- Tester login: one-click Clerk sign-in with the configured evaluator account credentials displayed on the auth screen.
+- Journal: mood, energy, sleep, exam focus, encrypted journal entry, Gemini analysis summary, and history.
+- Invoke Suggestions: `POST /api/entries/[id]/insights` generates saved speech-bubble insight cards for one journal entry.
+- Insight taxonomy: `Mood`, `Pattern`, `Suggestion`, `Highlight`, each with a fixed accent color.
+- Bubble UI: diagonal corner tags, speech-bubble tails, variable height, and CSS masonry columns.
+- Chat: `POST /api/chat` stores messages in a chat thread and calls Gemini with the user's complete available journal history, including decrypted journal text, as server-side context.
+- Guestbook: `GET/POST /api/guestbook` powers a shared authenticated note wall with stored rotation, scale, offset, and note color for stable scattered layout.
+- Theme: light/dark toggle implemented through CSS variables.
 
-### Without Clerk (local dev fallback)
-- Anonymous HttpOnly cookie (`mindtrail_session`) is issued on first visit via `src/lib/session.js`.
-- `storageKey = HMAC-SHA256(SESSION_SECRET, cookieId)` — scoped to the browser session.
-- No login required — any evaluator can visit `http://localhost:3001` and use all features immediately.
-- In-memory `Map` is used for storage when `DATABASE_URL` is absent.
+## Data Model
+
+Postgres tables created in `src/lib/db.js`:
+
+- `wellness_entries`: user-scoped journal metadata, encrypted raw text, and structured analysis.
+- `journal_insights`: per-entry AI insight bubbles with category, text, and accent.
+- `chat_threads`: one or more user-scoped companion chat threads.
+- `chat_messages`: user-scoped stored student/companion messages.
+- `guestbook_posts`: shared authenticated guestbook notes with stable layout metadata.
 
 ## Required Environment
 
@@ -48,64 +56,58 @@ The solution must analyze open-ended daily journaling and mood logs to uncover h
 | `DATABASE_URL` | Production | Postgres persistence |
 | `APP_ORIGIN` | Production | Same-origin write protection |
 | `DATA_ENCRYPTION_KEY` | Production | AES-256-GCM journal encryption |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Production | Clerk auth |
-| `CLERK_SECRET_KEY` | Production | Clerk auth |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Always for app access | Clerk auth |
+| `CLERK_SECRET_KEY` | Always for API access | Clerk auth |
 | `UPSTASH_REDIS_REST_URL` | Production | Rate limiting |
 | `UPSTASH_REDIS_REST_TOKEN` | Production | Rate limiting |
 | `CRON_SECRET` | Production | Cron job auth |
-| `SESSION_SECRET` | Dev + Prod | HMAC key for dev session hashes |
-| `SESSION_COOKIE_NAME` | Optional | Defaults to `mindtrail_session` |
 | `GEMINI_MODEL` | Optional | Defaults to `gemini-2.5-flash` |
 
-OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) are **not** app env vars — enter them in Clerk dashboard under Social Connections.
+OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) are not app env vars. Configure them in the Clerk dashboard under Social Connections.
 
 ## Implementation Progress
 
 - [x] Correct stale challenge context from cooking app to mental wellness tracker.
 - [x] Initialize production-oriented Next.js 16 project.
 - [x] Add secure server-side Gemini analysis and chat logic with structured output.
-- [x] Add Postgres persistence boundary with in-memory local development fallback.
+- [x] Add Postgres persistence boundary with in-memory local development adapter.
 - [x] Add validation, crisis detection, same-origin checks, and rate limiting.
-- [x] Add Clerk production auth, AES-GCM journal encryption, Upstash rate limiting, and Vercel Cron hook.
-- [x] Use `proxy.js` (Next.js 16 convention) for Clerk route middleware — confirmed clean build, no warnings.
-- [x] Add `sessionId` from Clerk `auth()` to actor object; storageKey = SHA256(userId) for persistent history; sessionKey = SHA256(sessionId) for per-login audit tracking.
-- [x] Use `SESSION_SECRET` as HMAC key in `session.js` for tamper-resistant dev session hashes.
-- [x] Update `.env.example` with SESSION_SECRET and OAuth credentials noted as Clerk dashboard entries.
-- [x] Rewrite `rules.md` as comprehensive project rules covering all domains.
-- [x] Build responsive first-screen application UI with honest empty states, keyboard-usable forms, mobile layout.
-- [x] Install dependencies and generate lockfile.
-- [x] Run lint, tests, and production build — clean pass.
-- [x] Fix Vercel 500: conditional ClerkProvider/middleware, correct AI SDK `maxTokens` param.
-- [x] Fix Vercel 403 "Request origin is not allowed" — auto-detect origin from `VERCEL_PROJECT_PRODUCTION_URL` / `VERCEL_URL`; skip origin check when no `Origin` header.
-- [x] Add tester login (anonymous cookie-based auth, no signup required) — `POST /api/tester` sets 24-hour httpOnly cookie; `auth.js` checks tester cookie as third auth path.
-- [x] Add on-demand Gemini suggestions API — `POST /api/suggest` with rate limit (5/hour); `generateSuggestions()` in `gemini.js` returns schedule, study tips, wellness actions, weekly focus.
-- [x] Install Recharts and build interactive chart components — `MoodEnergyChart` (LineChart), `SleepChart` (BarChart), `StressDonut` (PieChart) in `src/app/components/Charts.js`.
-- [x] Complete frontend rebuild with indigo-blue palette — 3-tab layout (Check-in, Insights, Chat), interactive charts grid, on-demand AI suggestions panel, tester button.
-- [x] Expand test suite from 4 to 44 tests across 6 test files — env, security, crypto, validation, safety coverage.
+- [x] Add Clerk auth, AES-GCM journal encryption, Upstash rate limiting, and Vercel Cron hook.
+- [x] Remove anonymous tester/dev-session access and require auth before app/API access.
+- [x] Add Clerk-backed tester login credentials to the auth screen.
+- [x] Add product-grade journal, chat, guestbook, onboarding, and navigation shell.
+- [x] Add per-entry AI insight bubbles with fixed taxonomy and masonry speech-bubble UI.
+- [x] Add chat thread/message persistence and full-journal context for companion chat.
+- [x] Add authenticated shared guestbook with handwritten scattered note wall.
+- [x] Update README and `.env.example` to match auth-first architecture.
 
 ## Verification Logs
 
-- **Last Run Verification**: 2026-06-20
-- **Status**: Passed (clean — no warnings)
-- **Command Used**: `npm run verify`
-- **Output/Results**: ESLint passed. Vitest passed — 6 test files, 44 tests (env, security, crypto, validation-extended, safety, validation). `next build` passed. Routes: `/`, `/api/chat`, `/api/cron/patterns`, `/api/entries`, `/api/suggest`, `/api/tester`.
+- Last Run Verification: 2026-06-20
+- Status: Passed for lint, tests, build, and runtime page probe.
+- Commands:
+  - `npm run lint`
+  - `npm run test`
+  - `npm run build`
+  - `curl.exe -I --max-time 20 http://127.0.0.1:3001/`
+- Results:
+  - ESLint passed.
+  - Vitest passed: 6 test files, 44 tests.
+  - `next build` passed.
+  - Runtime probe returned `HTTP/1.1 200 OK` for `/`.
+  - Routes: `/`, `/api/chat`, `/api/cron/patterns`, `/api/entries`, `/api/entries/[id]/insights`, `/api/guestbook`, `/api/suggest`.
 
-### Major Upgrade (2026-06-20)
-- `env.js`: `getAppOrigin()` auto-detects from `VERCEL_PROJECT_PRODUCTION_URL` and `VERCEL_URL` before falling back.
-- `security.js`: Skips origin check when no `Origin` header (browser same-origin navigations).
-- `auth.js`: Three auth paths — Clerk → tester cookie → dev session. Tester cookie (`mindtrail_tester`) provides anonymous access.
-- `session.js`: Accepts configurable cookie name parameter.
-- `gemini.js`: Added `generateSuggestions(entries)` with structured schema output.
-- `validation.js`: Added `suggestSchema` for suggestion count parameter.
-- `api/tester/route.js`: NEW — POST sets 24-hour tester cookie.
-- `api/suggest/route.js`: NEW — POST with auth + rate limit, calls `generateSuggestions`.
-- `components/Charts.js`: NEW — 3 interactive Recharts components (mood/energy line, sleep bar, stress donut).
-- `components/TesterButton.js`: NEW — Client component for anonymous tester login.
-- `globals.css`: Complete rewrite — indigo-blue palette, dark theme, chart grid, responsive layout.
-- `page.js`: Complete rewrite — 3-tab interface, insights with charts + AI suggestions, clean form.
-- `layout.js`: Updated with TesterButton alongside Clerk auth.
+## Major Rebuild (2026-06-20)
 
-### Vercel 500 Fix (2026-06-20)
-- `layout.js`: `ClerkProvider` and auth header now render only when `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is set. Prevents crash if Clerk isn't configured.
-- `proxy.js`: Middleware falls back to `NextResponse.next()` when Clerk env vars are absent. Prevents middleware crash blocking all routes.
-- `gemini.js`: Changed `maxOutputTokens` → `maxTokens` (correct Vercel AI SDK parameter name).
+- `auth.js`: Clerk-only actor resolution; removed tester cookie and anonymous dev-session fallback.
+- `proxy.js`: Clerk protects `/api/*`; page HTML can render the auth gate without middleware hangs.
+- `db.js`: Added `journal_insights`, `chat_threads`, `chat_messages`, and `guestbook_posts` persistence plus in-memory dev adapters.
+- `gemini.js`: Added `generateEntryInsights(entry)` and expanded `chatWithCompanion()` to use full journal context.
+- `validation.js`: Added `entryInsightSchema` and `guestbookSchema`.
+- `api/entries/[id]/insights/route.js`: New per-entry AI insight generation endpoint.
+- `api/guestbook/route.js`: New shared authenticated guestbook API.
+- `api/chat/route.js`: Now stores chat messages and sends complete available journal history to Gemini.
+- `page.js`: Complete product rebuild with auth setup state, onboarding, journal, chat, guestbook, and theme toggle.
+- `page.js`: Auth screen includes displayed test credentials and one-click tester sign-in via Clerk `useSignIn`.
+- `globals.css`: Complete visual redesign with light/dark tokens, masonry insight bubbles, and handwritten guestbook wall.
+- Removed `api/tester/route.js`, `components/TesterButton.js`, and `lib/session.js`.

@@ -1,31 +1,25 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { MoodEnergyChart, SleepChart, StressDonut } from './components/Charts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SignInButton, SignUpButton, UserButton, useSignIn, useUser } from '@clerk/nextjs';
 
-const TABS = [
-  { id: 'checkin', label: 'Check-in' },
-  { id: 'insights', label: 'Insights' },
-  { id: 'chat', label: 'Chat' }
+const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
+
+const SECTIONS = [
+  { id: 'journal', label: 'Journal' },
+  { id: 'chat', label: 'Chat' },
+  { id: 'guestbook', label: 'Guestbook' }
 ];
 
-const INITIAL_FORM = {
-  mood: 5,
-  energy: 5,
-  sleepHours: 7,
-  exam: '',
-  journal: ''
+const INITIAL_FORM = { mood: 5, energy: 5, sleepHours: 7, exam: '', journal: '' };
+const TEST_CREDENTIALS = {
+  email: 'manishp.dev@gmail.com',
+  password: 'Test_key01'
 };
 
-function stressClass(level) {
-  if (level === 'high') return 'stress-high';
-  if (level === 'moderate') return 'stress-moderate';
-  return 'stress-low';
-}
-
 function formatDate(dateStr) {
-  if (!dateStr) return '';
-  return new Date(dateStr).toLocaleDateString('en-IN', {
+  if (!dateStr) return 'Just now';
+  return new Date(dateStr).toLocaleString('en-IN', {
     day: 'numeric',
     month: 'short',
     hour: '2-digit',
@@ -33,57 +27,85 @@ function formatDate(dateStr) {
   });
 }
 
+function stressClass(level) {
+  if (level === 'high') return 'tone-high';
+  if (level === 'moderate') return 'tone-mid';
+  return 'tone-low';
+}
+
 export default function Home() {
-  const [tab, setTab] = useState('checkin');
-  const [form, setForm] = useState(INITIAL_FORM);
+  if (!hasClerk) return <AuthSetupRequired />;
+  return <AuthenticatedApp />;
+}
+
+function AuthenticatedApp() {
+  const { isLoaded, isSignedIn, user } = useUser();
+  const [section, setSection] = useState('journal');
+  const [theme, setTheme] = useState('light');
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [entries, setEntries] = useState([]);
-  const [activeEntry, setActiveEntry] = useState(null);
+  const [guestbook, setGuestbook] = useState([]);
+  const [form, setForm] = useState(INITIAL_FORM);
   const [chatText, setChatText] = useState('');
   const [chatLog, setChatLog] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [chatLoading, setChatLoading] = useState(false);
+  const [guestForm, setGuestForm] = useState({ authorName: '', message: '' });
+  const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
-  const [crisis, setCrisis] = useState(null);
-  const [suggestions, setSuggestions] = useState(null);
-  const [suggestLoading, setSuggestLoading] = useState(false);
   const chatEndRef = useRef(null);
 
   useEffect(() => {
-    fetch('/api/entries')
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.entries) {
-          setEntries(data.entries);
-          if (data.entries[0]) setActiveEntry(data.entries[0]);
-        }
-      })
-      .catch(() => {});
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  const loadEntries = useCallback(async () => {
+    const res = await fetch('/api/entries');
+    if (!res.ok) throw new Error('Unable to load your journal');
+    const data = await res.json();
+    setEntries(data.entries || []);
   }, []);
+
+  const loadGuestbook = useCallback(async () => {
+    const res = await fetch('/api/guestbook');
+    if (!res.ok) throw new Error('Unable to load the guestbook');
+    const data = await res.json();
+    setGuestbook(data.posts || []);
+  }, []);
+
+  useEffect(() => {
+    if (!isSignedIn) return;
+    const seenKey = `mindtrail-onboarding-${user?.id}`;
+    Promise.resolve()
+      .then(() => {
+        setShowOnboarding(!localStorage.getItem(seenKey));
+        setError('');
+        return Promise.all([loadEntries(), loadGuestbook()]);
+      })
+      .catch((err) => setError(err.message));
+  }, [isSignedIn, loadEntries, loadGuestbook, user?.id]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatLog]);
 
-  const trend = useMemo(() => {
-    if (!entries.length) return null;
-    const avg = (fn) => (entries.reduce((s, e) => s + fn(e), 0) / entries.length).toFixed(1);
-    return {
-      count: entries.length,
-      avgMood: avg((e) => Number(e.mood)),
-      avgEnergy: avg((e) => Number(e.energy)),
-      avgSleep: avg((e) => Number(e.sleepHours))
-    };
+  const metrics = useMemo(() => {
+    if (!entries.length) return { count: 0, mood: '-', sleep: '-' };
+    const avg = (field) => (entries.reduce((sum, item) => sum + Number(item[field]), 0) / entries.length).toFixed(1);
+    return { count: entries.length, mood: avg('mood'), sleep: `${avg('sleepHours')}h` };
   }, [entries]);
 
-  function updateField(name, value) {
-    setForm((f) => ({ ...f, [name]: value }));
+  function finishOnboarding() {
+    if (user?.id) localStorage.setItem(`mindtrail-onboarding-${user.id}`, 'true');
+    setShowOnboarding(false);
+  }
+
+  function updateForm(name, value) {
+    setForm((current) => ({ ...current, [name]: value }));
   }
 
   async function submitEntry(event) {
     event.preventDefault();
-    setLoading(true);
+    setLoading('entry');
     setError('');
-    setCrisis(null);
     try {
       const res = await fetch('/api/entries', {
         method: 'POST',
@@ -91,20 +113,31 @@ export default function Home() {
         body: JSON.stringify(form)
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Unable to analyze journal');
-      if (data.crisis) {
-        setCrisis(data.crisis.message);
-        return;
-      }
-      setEntries((cur) => [data.entry, ...cur]);
-      setActiveEntry(data.entry);
+      if (!res.ok) throw new Error(data.error || 'Unable to save this journal entry');
+      if (data.crisis) throw new Error(data.crisis.message);
+      setEntries((current) => [data.entry, ...current]);
       setForm(INITIAL_FORM);
-      setSuggestions(null);
-      setTab('insights');
     } catch (err) {
       setError(err.message);
     } finally {
-      setLoading(false);
+      setLoading('');
+    }
+  }
+
+  async function invokeInsights(entryId) {
+    setLoading(`insights-${entryId}`);
+    setError('');
+    try {
+      const res = await fetch(`/api/entries/${entryId}/insights`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to invoke suggestions');
+      setEntries((current) => current.map((entry) => (
+        entry.id === entryId ? { ...entry, insightBubbles: data.insights } : entry
+      )));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading('');
     }
   }
 
@@ -113,8 +146,8 @@ export default function Home() {
     if (!chatText.trim()) return;
     const outgoing = chatText.trim();
     setChatText('');
-    setChatLoading(true);
-    setChatLog((cur) => [...cur, { role: 'student', text: outgoing }]);
+    setChatLog((current) => [...current, { role: 'student', content: outgoing }]);
+    setLoading('chat');
     setError('');
     try {
       const res = await fetch('/api/chat', {
@@ -123,366 +156,324 @@ export default function Home() {
         body: JSON.stringify({ message: outgoing })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Unable to reach companion');
-      setChatLog((cur) => [...cur, { role: 'companion', text: data.reply }]);
+      if (!res.ok) throw new Error(data.error || 'Unable to reach the companion');
+      setChatLog(data.messages?.length ? data.messages : (current) => [...current, { role: 'companion', content: data.reply }]);
     } catch (err) {
       setError(err.message);
     } finally {
-      setChatLoading(false);
+      setLoading('');
     }
   }
 
-  async function fetchSuggestions() {
-    setSuggestLoading(true);
+  async function submitGuestbook(event) {
+    event.preventDefault();
+    setLoading('guestbook');
+    setError('');
     try {
-      const res = await fetch('/api/suggest', {
+      const res = await fetch('/api/guestbook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ count: 10 })
+        body: JSON.stringify(guestForm)
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Unable to get suggestions');
-      setSuggestions(data.suggestions);
+      if (!res.ok) throw new Error(data.error || 'Unable to add guestbook note');
+      setGuestbook((current) => [data.post, ...current]);
+      setGuestForm({ authorName: '', message: '' });
     } catch (err) {
       setError(err.message);
     } finally {
-      setSuggestLoading(false);
+      setLoading('');
     }
   }
 
-  return (
-    <main className="app-shell">
-      <div className="brand">
-        <h1>MindTrail</h1>
-        <p>Wellness tracker for exam preparation</p>
-      </div>
+  if (!isLoaded) return <LoadingScreen />;
+  if (!isSignedIn) return <AuthScreen />;
 
-      <nav className="tab-nav" role="tablist">
-        {TABS.map((t) => (
+  return (
+    <main className="product-shell">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">Journal companion</p>
+          <h1>MindTrail</h1>
+        </div>
+        <div className="topbar-actions">
+          <button className="icon-button" type="button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} title="Toggle theme">
+            {theme === 'light' ? 'Dark' : 'Light'}
+          </button>
+          <UserButton />
+        </div>
+      </header>
+
+      {showOnboarding && <OnboardingCard name={user?.firstName || 'there'} onDone={finishOnboarding} />}
+
+      <section className="status-strip" aria-label="Journal summary">
+        <Stat label="Entries" value={metrics.count} />
+        <Stat label="Average mood" value={metrics.mood} />
+        <Stat label="Average sleep" value={metrics.sleep} />
+      </section>
+
+      <nav className="section-nav" aria-label="Primary">
+        {SECTIONS.map((item) => (
           <button
-            key={t.id}
-            role="tab"
-            aria-selected={tab === t.id}
-            data-active={tab === t.id}
-            className="tab-btn"
-            onClick={() => { setTab(t.id); setError(''); }}
+            key={item.id}
+            className="nav-pill"
+            data-active={section === item.id}
+            onClick={() => setSection(item.id)}
+            type="button"
           >
-            {t.label}
-            {t.id === 'insights' && entries.length > 0 && (
-              <span className="tab-badge">{entries.length}</span>
-            )}
+            {item.label}
           </button>
         ))}
       </nav>
 
-      <div className="tab-content" key={tab}>
-        {tab === 'checkin' && (
-          <CheckinTab
-            form={form}
-            loading={loading}
-            error={error}
-            crisis={crisis}
-            onUpdate={updateField}
-            onSubmit={submitEntry}
-          />
-        )}
-        {tab === 'insights' && (
-          <InsightsTab
-            entries={entries}
-            activeEntry={activeEntry}
-            trend={trend}
-            suggestions={suggestions}
-            suggestLoading={suggestLoading}
-            onSelect={setActiveEntry}
-            onSuggest={fetchSuggestions}
-          />
-        )}
-        {tab === 'chat' && (
-          <ChatTab
-            chatLog={chatLog}
-            chatText={chatText}
-            chatLoading={chatLoading}
-            error={error}
-            chatEndRef={chatEndRef}
-            onTextChange={setChatText}
-            onSubmit={sendChat}
-          />
-        )}
-      </div>
+      {error && <p className="notice">{error}</p>}
+
+      {section === 'journal' && (
+        <JournalSection
+          form={form}
+          entries={entries}
+          loading={loading}
+          onUpdate={updateForm}
+          onSubmit={submitEntry}
+          onInvoke={invokeInsights}
+        />
+      )}
+      {section === 'chat' && (
+        <ChatSection
+          chatLog={chatLog}
+          chatText={chatText}
+          loading={loading === 'chat'}
+          chatEndRef={chatEndRef}
+          onText={setChatText}
+          onSubmit={sendChat}
+        />
+      )}
+      {section === 'guestbook' && (
+        <GuestbookSection
+          posts={guestbook}
+          form={guestForm}
+          loading={loading === 'guestbook'}
+          onForm={setGuestForm}
+          onSubmit={submitGuestbook}
+        />
+      )}
     </main>
   );
 }
 
-function CheckinTab({ form, loading, error, crisis, onUpdate, onSubmit }) {
+function LoadingScreen() {
+  return <div className="auth-frame"><div className="loading-mark" /><p>Loading MindTrail...</p></div>;
+}
+
+function AuthSetupRequired() {
   return (
-    <div className="card">
-      <div className="card-header">
-        <h2>Daily check-in</h2>
-        <p>Log your mood, energy, and what happened today</p>
+    <div className="auth-frame">
+      <div className="auth-panel">
+        <p className="eyebrow">Authentication required</p>
+        <h1>Connect Clerk before app access</h1>
+        <p>MindTrail no longer supports guest mode. Add `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` to enable email/password or OAuth sign in.</p>
       </div>
-      <form onSubmit={onSubmit} className="form-grid">
-        <div className="field">
-          <label htmlFor="exam" className="field-label">Exam focus</label>
-          <input
-            id="exam"
-            className="field-input"
-            value={form.exam}
-            onChange={(e) => onUpdate('exam', e.target.value)}
-            placeholder="NEET, JEE, CUET, CAT, GATE, UPSC..."
-            maxLength={80}
-            required
-          />
-        </div>
-
-        <div className="slider-group">
-          <SliderField id="mood" label="Mood" value={form.mood} onChange={(v) => onUpdate('mood', v)} />
-          <SliderField id="energy" label="Energy" value={form.energy} onChange={(v) => onUpdate('energy', v)} />
-          <div className="slider-field">
-            <div className="slider-top">
-              <span className="slider-label">Sleep</span>
-              <span className="slider-value">{form.sleepHours}h</span>
-            </div>
-            <input
-              type="range" min="0" max="16" step="0.5"
-              value={form.sleepHours}
-              onChange={(e) => onUpdate('sleepHours', Number(e.target.value))}
-              aria-label="Sleep hours"
-            />
-          </div>
-        </div>
-
-        <div className="field">
-          <label htmlFor="journal" className="field-label">Journal</label>
-          <textarea
-            id="journal"
-            className="field-input"
-            value={form.journal}
-            onChange={(e) => onUpdate('journal', e.target.value)}
-            placeholder="Write about study pressure, sleep, distractions, confidence, family expectations, or anything that affected your day."
-            minLength={30}
-            maxLength={4000}
-            required
-          />
-        </div>
-
-        <button type="submit" className="btn btn-primary" disabled={loading}>
-          {loading ? <><span className="spinner" /> Analyzing...</> : 'Analyze check-in'}
-        </button>
-      </form>
-      {error && <p className="alert alert-warn">{error}</p>}
-      {crisis && <p className="alert alert-crisis">{crisis}</p>}
     </div>
   );
 }
 
-function SliderField({ id, label, value, onChange }) {
-  return (
-    <div className="slider-field">
-      <div className="slider-top">
-        <span className="slider-label">{label}</span>
-        <span className="slider-value">{value}</span>
-      </div>
-      <input
-        type="range" min="1" max="10"
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        aria-label={`${label} level`}
-      />
-    </div>
-  );
-}
+function AuthScreen() {
+  const { isLoaded, signIn, setActive } = useSignIn();
+  const [testerLoading, setTesterLoading] = useState(false);
+  const [testerError, setTesterError] = useState('');
 
-function InsightsTab({ entries, activeEntry, trend, suggestions, suggestLoading, onSelect, onSuggest }) {
-  if (!entries.length) {
-    return (
-      <div className="card">
-        <div className="empty-state">
-          <div className="empty-icon" aria-hidden="true">&#x1f4d3;</div>
-          <h3>No check-ins yet</h3>
-          <p>Complete your first daily check-in to see personalized insights and interactive charts here.</p>
-        </div>
-      </div>
-    );
+  async function signInTester() {
+    if (!isLoaded) return;
+    setTesterLoading(true);
+    setTesterError('');
+    try {
+      const result = await signIn.create({
+        identifier: TEST_CREDENTIALS.email,
+        password: TEST_CREDENTIALS.password
+      });
+
+      if (result.status === 'complete') {
+        await setActive({ session: result.createdSessionId });
+        return;
+      }
+
+      setTesterError('Tester account needs an additional Clerk step before sign-in can complete.');
+    } catch (err) {
+      setTesterError(err.errors?.[0]?.message || err.message || 'Tester login failed');
+    } finally {
+      setTesterLoading(false);
+    }
   }
 
   return (
-    <>
-      {trend && (
-        <div className="trend-bar">
-          <div className="trend-stat"><strong>{trend.count}</strong> logs</div>
-          <div className="trend-stat"><strong>{trend.avgMood}</strong> avg mood</div>
-          <div className="trend-stat"><strong>{trend.avgEnergy}</strong> avg energy</div>
-          <div className="trend-stat"><strong>{trend.avgSleep}h</strong> avg sleep</div>
+    <div className="auth-frame">
+      <section className="auth-panel">
+        <p className="eyebrow">Private journal, real memory</p>
+        <h1>Sign in to enter MindTrail</h1>
+        <p>Your companion, journal history, AI insight bubbles, and guestbook identity all live behind your account.</p>
+        <div className="tester-card">
+          <span>Testing credentials</span>
+          <code>{TEST_CREDENTIALS.email}</code>
+          <code>{TEST_CREDENTIALS.password}</code>
         </div>
-      )}
+        <div className="auth-actions">
+          <button className="primary-button" type="button" onClick={signInTester} disabled={!isLoaded || testerLoading}>
+            {testerLoading ? 'Signing in...' : 'Tester login'}
+          </button>
+          <SignInButton mode="modal"><button className="primary-button" type="button">Log in</button></SignInButton>
+          <SignUpButton mode="modal"><button className="secondary-button" type="button">Create account</button></SignUpButton>
+        </div>
+        {testerError && <p className="auth-error">{testerError}</p>}
+      </section>
+    </div>
+  );
+}
 
-      {entries.length >= 2 && (
-        <div className="charts-grid">
-          <MoodEnergyChart entries={entries} />
-          <SleepChart entries={entries} />
-          {entries.length >= 3 && <StressDonut entries={entries} />}
-        </div>
-      )}
-
-      <div className="suggest-panel">
-        <div className="card">
-          <div className="card-header">
-            <h2>AI scheduling suggestions</h2>
-            <p>Get personalized study and wellness advice based on your journal patterns</p>
-          </div>
-          {!suggestions ? (
-            <button
-              type="button"
-              className="btn btn-ghost suggest-trigger"
-              onClick={onSuggest}
-              disabled={suggestLoading}
-            >
-              {suggestLoading
-                ? <><span className="spinner" /> Generating suggestions...</>
-                : <><span aria-hidden="true">&#x2728;</span> Get AI suggestions</>
-              }
-            </button>
-          ) : (
-            <SuggestResult data={suggestions} onRefresh={onSuggest} loading={suggestLoading} />
-          )}
-        </div>
+function OnboardingCard({ name, onDone }) {
+  return (
+    <section className="onboarding">
+      <div>
+        <p className="eyebrow">First run</p>
+        <h2>Welcome, {name}</h2>
+        <p>Start with one honest entry. The companion will use your full journal history server-side, and each entry can grow its own cluster of insight bubbles.</p>
       </div>
+      <button className="primary-button" type="button" onClick={onDone}>Begin</button>
+    </section>
+  );
+}
 
-      {activeEntry && (
-        <div className="card">
-          <div className="card-header">
-            <h2>Latest analysis</h2>
-          </div>
-          <div className="analysis">
-            <div>
-              <span className={`stress-indicator ${stressClass(activeEntry.analysis.stressLevel)}`}>
-                {activeEntry.analysis.stressLevel} stress
-              </span>
-            </div>
-            <p className="analysis-summary">{activeEntry.analysis.summary}</p>
-            <AnalysisSection title="Hidden triggers" items={activeEntry.analysis.hiddenTriggers} />
-            <AnalysisSection title="Emotional patterns" items={activeEntry.analysis.emotionalPatterns} />
-            <AnalysisSection title="Coping strategies" items={activeEntry.analysis.copingStrategies} />
-            <div className="mindfulness-block">
-              <strong>Mindfulness reset</strong>
-              <p>{activeEntry.analysis.mindfulnessExercise}</p>
-            </div>
-            <p className="encouragement">{activeEntry.analysis.encouragement}</p>
-            <p className="follow-up">{activeEntry.analysis.followUpQuestion}</p>
-          </div>
-        </div>
-      )}
+function Stat({ label, value }) {
+  return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
+}
 
-      <div className="card">
-        <div className="card-header">
-          <h2>History</h2>
+function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }) {
+  return (
+    <section className="journal-layout">
+      <form className="journal-composer" onSubmit={onSubmit}>
+        <div>
+          <p className="eyebrow">Today</p>
+          <h2>Write the real version</h2>
         </div>
-        <div className="history-list">
-          {entries.map((entry) => (
-            <button
-              key={entry.id}
-              className="history-item"
-              data-active={activeEntry?.id === entry.id}
-              onClick={() => onSelect(entry)}
-            >
-              <div className="history-item-left">
-                <span className="history-exam">{entry.exam}</span>
-                <span className="history-meta">
-                  Mood {entry.mood} / Energy {entry.energy} / {entry.sleepHours}h sleep
-                  {entry.createdAt && ` · ${formatDate(entry.createdAt)}`}
-                </span>
+        <input className="input" value={form.exam} onChange={(e) => onUpdate('exam', e.target.value)} placeholder="Exam focus" maxLength={80} required />
+        <div className="range-grid">
+          <Range label="Mood" value={form.mood} onChange={(v) => onUpdate('mood', v)} />
+          <Range label="Energy" value={form.energy} onChange={(v) => onUpdate('energy', v)} />
+          <Range label="Sleep" min={0} max={16} step={0.5} suffix="h" value={form.sleepHours} onChange={(v) => onUpdate('sleepHours', v)} />
+        </div>
+        <textarea className="input journal-textarea" value={form.journal} onChange={(e) => onUpdate('journal', e.target.value)} placeholder="What happened, what kept looping in your head, what helped, what felt heavy?" minLength={30} maxLength={4000} required />
+        <button className="primary-button" type="submit" disabled={loading === 'entry'}>{loading === 'entry' ? 'Analyzing...' : 'Save journal entry'}</button>
+      </form>
+
+      <div className="entry-stack">
+        {entries.length === 0 && <EmptyState title="No entries yet" text="Your first entry unlocks analysis, chat memory, and entry-level suggestions." />}
+        {entries.map((entry) => (
+          <article className="entry-block" key={entry.id}>
+            <div className="entry-card">
+              <div className="entry-meta">
+                <span>{formatDate(entry.createdAt)}</span>
+                <span className={`stress-chip ${stressClass(entry.analysis?.stressLevel)}`}>{entry.analysis?.stressLevel || 'new'}</span>
               </div>
-              {entry.analysis && (
-                <span className={`history-stress ${stressClass(entry.analysis.stressLevel)}`}>
-                  {entry.analysis.stressLevel}
-                </span>
-              )}
-            </button>
-          ))}
+              <h3>{entry.exam}</h3>
+              <p>{entry.analysis?.summary}</p>
+              <div className="entry-numbers">
+                <span>Mood {entry.mood}</span>
+                <span>Energy {entry.energy}</span>
+                <span>Sleep {entry.sleepHours}h</span>
+              </div>
+              <button className="invoke-button" type="button" onClick={() => onInvoke(entry.id)} disabled={loading === `insights-${entry.id}`}>
+                {loading === `insights-${entry.id}` ? 'Invoking...' : 'Invoke Suggestions'}
+              </button>
+            </div>
+            <BubbleMasonry bubbles={entry.insightBubbles || []} />
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Range({ label, value, onChange, min = 1, max = 10, step = 1, suffix = '' }) {
+  return (
+    <label className="range-field">
+      <span>{label}</span>
+      <strong>{value}{suffix}</strong>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+    </label>
+  );
+}
+
+function BubbleMasonry({ bubbles }) {
+  if (!bubbles.length) return null;
+  return (
+    <div className="bubble-masonry">
+      {bubbles.map((bubble) => (
+        <div className="insight-bubble" key={bubble.id} style={{ '--accent': bubble.accent }}>
+          <span>{bubble.category}</span>
+          <p>{bubble.text}</p>
         </div>
+      ))}
+    </div>
+  );
+}
+
+function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit }) {
+  return (
+    <section className="chat-panel">
+      <div className="section-heading">
+        <p className="eyebrow">Companion</p>
+        <h2>Chat with your full journal context</h2>
       </div>
-    </>
-  );
-}
-
-function SuggestResult({ data, onRefresh, loading }) {
-  return (
-    <div className="suggest-result">
-      {data.weeklyFocus && <div className="suggest-focus">{data.weeklyFocus}</div>}
-      <SuggestSection title="Schedule suggestions" items={data.schedule} />
-      <SuggestSection title="Study tips" items={data.studyTips} />
-      <SuggestSection title="Wellness actions" items={data.wellnessActions} />
-      <button type="button" className="btn btn-ghost" onClick={onRefresh} disabled={loading} style={{ marginTop: 8 }}>
-        {loading ? <><span className="spinner" /> Refreshing...</> : 'Refresh suggestions'}
-      </button>
-    </div>
-  );
-}
-
-function SuggestSection({ title, items }) {
-  if (!items?.length) return null;
-  return (
-    <div className="suggest-section">
-      <h4>{title}</h4>
-      <ul>
-        {items.map((item) => <li key={item}>{item}</li>)}
-      </ul>
-    </div>
-  );
-}
-
-function AnalysisSection({ title, items }) {
-  if (!items?.length) return null;
-  return (
-    <div className="analysis-section">
-      <h3>{title}</h3>
-      <ul>
-        {items.map((item) => <li key={item}>{item}</li>)}
-      </ul>
-    </div>
-  );
-}
-
-function ChatTab({ chatLog, chatText, chatLoading, error, chatEndRef, onTextChange, onSubmit }) {
-  return (
-    <div className="card">
-      <div className="card-header">
-        <h2>Wellness companion</h2>
-        <p>Ask for a study break plan, a confidence reset, or help naming a stress trigger</p>
+      <div className="chat-feed">
+        {!chatLog.length && <EmptyState title="Ask anything study-season related" text="The server adds your complete available journal history to each companion response." />}
+        {chatLog.map((message, index) => (
+          <div className={`chat-line ${message.role}`} key={`${message.role}-${index}`}>{message.content}</div>
+        ))}
+        {loading && <div className="chat-line companion">Thinking...</div>}
+        <div ref={chatEndRef} />
       </div>
-      <div className="chat-container">
-        <div className="chat-messages" aria-live="polite">
-          {chatLog.length === 0 && (
-            <div className="empty-state">
-              <div className="empty-icon" aria-hidden="true">&#x1f4ac;</div>
-              <h3>Start a conversation</h3>
-              <p>Your companion uses your recent check-ins for context.</p>
-            </div>
-          )}
-          {chatLog.map((msg, i) => (
-            <div key={`${msg.role}-${i}`} className={`chat-bubble chat-bubble-${msg.role}`}>
-              {msg.text}
-            </div>
-          ))}
-          {chatLoading && (
-            <div className="chat-bubble chat-bubble-companion">
-              <span className="spinner" />
-            </div>
-          )}
-          <div ref={chatEndRef} />
+      <form className="chat-form" onSubmit={onSubmit}>
+        <input className="input" value={chatText} onChange={(event) => onText(event.target.value)} placeholder="Ask for perspective, a plan, or a calmer next step" maxLength={1200} />
+        <button className="primary-button" type="submit" disabled={loading}>Send</button>
+      </form>
+    </section>
+  );
+}
+
+function GuestbookSection({ posts, form, loading, onForm, onSubmit }) {
+  return (
+    <section className="guestbook-section">
+      <form className="guestbook-form" onSubmit={onSubmit}>
+        <div>
+          <p className="eyebrow">Shared wall</p>
+          <h2>Leave a handwritten note</h2>
         </div>
-        <form onSubmit={onSubmit} className="chat-input-row">
-          <input
-            className="field-input"
-            value={chatText}
-            onChange={(e) => onTextChange(e.target.value)}
-            placeholder="What do you need right now?"
-            maxLength={1200}
-          />
-          <button type="submit" className="btn btn-primary" disabled={chatLoading}>Send</button>
-        </form>
-        {error && <p className="alert alert-warn">{error}</p>}
+        <input className="input" value={form.authorName} onChange={(event) => onForm({ ...form, authorName: event.target.value })} placeholder="Name" maxLength={32} required />
+        <textarea className="input" value={form.message} onChange={(event) => onForm({ ...form, message: event.target.value })} placeholder="Write whatever you want to leave behind" maxLength={280} required />
+        <button className="primary-button" type="submit" disabled={loading}>{loading ? 'Posting...' : 'Pin note'}</button>
+      </form>
+      <div className="guestbook-wall">
+        {posts.length === 0 && <EmptyState title="The wall is quiet" text="Be the first signed-in user to leave a note." />}
+        {posts.map((post) => (
+          <article
+            className="guest-note"
+            key={post.id}
+            style={{
+              '--rotate': `${post.rotation}deg`,
+              '--scale': post.scale,
+              '--x': `${post.xOffset}px`,
+              '--y': `${post.yOffset}px`,
+              '--note': post.color
+            }}
+          >
+            <p>{post.message}</p>
+            <span>{post.authorName}</span>
+          </article>
+        ))}
       </div>
-    </div>
+    </section>
   );
+}
+
+function EmptyState({ title, text }) {
+  return <div className="empty-state"><h3>{title}</h3><p>{text}</p></div>;
 }

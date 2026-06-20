@@ -1323,10 +1323,16 @@ function useSpeechInput() {
       if (e.error === 'aborted' || e.error === 'no-speech') return;
       keepAliveRef.current = false;
       setListening(false);
+      const isEdge = navigator.userAgent.includes('Edg/');
       const map = {
+        'not-allowed': isEdge
+          ? 'Edge blocked speech recognition. Fix: Windows Settings → Privacy & security → Speech → turn ON "Online speech recognition". Then reload this page.'
+          : 'Microphone access blocked. Click the lock icon in your address bar → Microphone → Allow, then reload.',
+        'service-not-allowed': isEdge
+          ? 'Edge speech service unavailable. Enable "Online speech recognition" in Windows Privacy settings, then reload.'
+          : 'Speech recognition is not allowed in this context. Try Chrome on HTTPS.',
         'audio-capture': 'No microphone detected. Please connect one.',
-        'network': 'Voice needs an internet connection.',
-        'service-not-allowed': 'Voice recognition is blocked in this browser or context.'
+        'network': 'Voice needs an internet connection (speech audio is processed by the browser).',
       };
       setVoiceError(map[e.error] || `Voice error: ${e.error}`);
     };

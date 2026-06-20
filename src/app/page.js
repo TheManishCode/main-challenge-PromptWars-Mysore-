@@ -1324,8 +1324,7 @@ function useSpeechInput() {
       keepAliveRef.current = false;
       setListening(false);
       const map = {
-        'not-allowed': 'Microphone access denied — click the 🔒 in your browser bar and allow microphone.',
-        'audio-capture': 'No microphone detected. Please plug one in.',
+        'audio-capture': 'No microphone detected. Please connect one.',
         'network': 'Voice needs an internet connection.',
         'service-not-allowed': 'Voice recognition is blocked in this browser or context.'
       };
@@ -1335,7 +1334,7 @@ function useSpeechInput() {
     return rec;
   }
 
-  function start({ continuous = true, onResult, onEnd } = {}) {
+  async function start({ continuous = true, onResult, onEnd } = {}) {
     if (!supported) {
       setVoiceError('Voice input is not supported in this browser. Try Chrome or Edge.');
       return;
@@ -1343,6 +1342,25 @@ function useSpeechInput() {
     try { recRef.current?.abort(); } catch {}
     setVoiceError('');
     setInterim('');
+
+    // Ask for mic permission explicitly so the browser shows its native prompt.
+    // This also handles the case where permission was previously denied — the
+    // browser will either re-prompt or tell us it's blocked, before we try
+    // to start SpeechRecognition (which fails silently on denied permission).
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Release the tracks immediately; SpeechRecognition manages its own stream.
+      stream.getTracks().forEach((t) => t.stop());
+    } catch (err) {
+      const isDenied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError';
+      setVoiceError(
+        isDenied
+          ? 'Microphone blocked. Open your browser settings and allow microphone for this site, then try again.'
+          : `Microphone unavailable: ${err.message}`
+      );
+      return;
+    }
+
     callbacksRef.current = { onResult, onEnd, continuous };
     keepAliveRef.current = continuous;
     const rec = buildRec();

@@ -44,6 +44,8 @@ The solution must analyze open-ended daily journaling and mood logs to uncover h
 - [x] Add Postgres persistence boundary with local development fallback.
 - [x] Add validation, crisis detection, same-origin checks, and rate limiting.
 - [x] Add Clerk production auth, AES-GCM journal encryption, Upstash rate limiting, and Vercel Cron hook.
+- [x] Update Clerk integration to current App Router pattern with `proxy.js`, `ClerkProvider` inside `<body>`, and `Show` auth controls.
+- [x] Create ignored local test instance env files for Gemini, Neon, Clerk, Upstash, encryption, and cron secrets.
 - [x] Build responsive first-screen application UI with honest empty states.
 - [x] Add `rules.md` for production/vibe-coding constraints.
 - [x] Install dependencies and generate lockfile.
@@ -54,4 +56,4 @@ The solution must analyze open-ended daily journaling and mood logs to uncover h
 - **Last Run Verification**: 2026-06-20
 - **Status**: Passed
 - **Command Used**: `npm run verify`
-- **Output/Results**: ESLint passed. Vitest passed with 2 test files and 4 tests. `next build` passed with routes `/`, `/api/chat`, `/api/cron/patterns`, and `/api/entries`.
+- **Output/Results**: ESLint passed. Vitest passed with 2 test files and 4 tests. `next build` passed with routes `/`, `/api/chat`, `/api/cron/patterns`, and `/api/entries`. Build loaded ignored local `.env.local` and `.env` for the test instance.

@@ -7,19 +7,13 @@ export const metadata = {
 };
 
 export default function RootLayout({ children }) {
-  const content = (
-    <html lang="en">
-      <body>{children}</body>
-    </html>
-  );
-
-  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
-    return content;
-  }
-
   return (
-    <ClerkProvider>
-      {content}
-    </ClerkProvider>
+    <html lang="en">
+      <body>
+        <ClerkProvider>
+          {children}
+        </ClerkProvider>
+      </body>
+    </html>
   );
 }

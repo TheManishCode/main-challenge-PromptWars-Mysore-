@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/nextjs';
+import { Show, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 
 const initialForm = {
   mood: 5,
@@ -18,7 +18,6 @@ function stressTone(level) {
 }
 
 export default function Home() {
-  const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
   const [form, setForm] = useState(initialForm);
   const [entries, setEntries] = useState([]);
   const [activeEntry, setActiveEntry] = useState(null);
@@ -116,18 +115,17 @@ export default function Home() {
           </div>
           <div className="top-actions">
             <div className="status-pill">Exam wellness tracker</div>
-            {clerkEnabled ? (
-              <>
-                <SignedOut>
-                  <SignInButton mode="modal">
-                    <button type="button">Sign in</button>
-                  </SignInButton>
-                </SignedOut>
-                <SignedIn>
-                  <UserButton />
-                </SignedIn>
-              </>
-            ) : null}
+            <Show when="signed-out">
+              <SignInButton mode="modal">
+                <button type="button">Sign in</button>
+              </SignInButton>
+              <SignUpButton mode="modal">
+                <button type="button" className="secondary-button">Sign up</button>
+              </SignUpButton>
+            </Show>
+            <Show when="signed-in">
+              <UserButton />
+            </Show>
           </div>
         </header>
 

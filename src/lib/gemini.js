@@ -159,13 +159,14 @@ function getModel() {
   return google(process.env.GEMINI_MODEL || 'gemini-2.5-flash');
 }
 
-// Low-latency model for the live voice conversation, where time-to-first-word
-// matters more than depth. Falls back to flash-lite for fast first tokens.
+// Model for the live voice conversation. Defaults to the same fast flash model
+// as the rest of the app (thinking is disabled at the call site for low latency).
+// Override with GEMINI_VOICE_MODEL if a different model is preferred.
 function getFastModel() {
   const google = createGoogleGenerativeAI({
     apiKey: getRequiredEnv('GEMINI_API_KEY')
   });
-  return google(process.env.GEMINI_VOICE_MODEL || 'gemini-2.5-flash-lite');
+  return google(process.env.GEMINI_VOICE_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash');
 }
 
 /* ─── Entry Analysis ─────────────────────────────────────────────────────── */

@@ -282,49 +282,51 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
 
       {error && <p className="notice">{error}</p>}
 
-      {section === 'journal' && (
-        <JournalSection
-          form={form}
-          entries={entries}
-          loading={loading}
-          onUpdate={updateForm}
-          onSubmit={submitEntry}
-          onInvoke={invokeInsights}
-        />
-      )}
-      {section === 'relief' && (
-        <ReliefRoomSection
-          entries={entries}
-          worries={worries}
-          setWorries={setWorries}
-          loading={loading}
-          setLoading={setLoading}
-          setError={setError}
-        />
-      )}
-      {section === 'map' && <GraphMapSection entries={entries} />}
-      {section === 'chat' && (
-        <ChatSection
-          chatLog={chatLog}
-          chatText={chatText}
-          loading={loading === 'chat'}
-          chatEndRef={chatEndRef}
-          onText={setChatText}
-          onSubmit={sendChat}
-          onSendText={dispatchChat}
-          onAppendMessage={appendChatMessage}
-        />
-      )}
-      {section === 'scan' && <ScanSection />}
-      {section === 'guestbook' && (
-        <GuestbookSection
-          posts={guestbook}
-          form={guestForm}
-          loading={loading === 'guestbook'}
-          onForm={setGuestForm}
-          onSubmit={submitGuestbook}
-        />
-      )}
+      <div className="section-view" key={section}>
+        {section === 'journal' && (
+          <JournalSection
+            form={form}
+            entries={entries}
+            loading={loading}
+            onUpdate={updateForm}
+            onSubmit={submitEntry}
+            onInvoke={invokeInsights}
+          />
+        )}
+        {section === 'relief' && (
+          <ReliefRoomSection
+            entries={entries}
+            worries={worries}
+            setWorries={setWorries}
+            loading={loading}
+            setLoading={setLoading}
+            setError={setError}
+          />
+        )}
+        {section === 'map' && <GraphMapSection entries={entries} />}
+        {section === 'chat' && (
+          <ChatSection
+            chatLog={chatLog}
+            chatText={chatText}
+            loading={loading === 'chat'}
+            chatEndRef={chatEndRef}
+            onText={setChatText}
+            onSubmit={sendChat}
+            onSendText={dispatchChat}
+            onAppendMessage={appendChatMessage}
+          />
+        )}
+        {section === 'scan' && <ScanSection />}
+        {section === 'guestbook' && (
+          <GuestbookSection
+            posts={guestbook}
+            form={guestForm}
+            loading={loading === 'guestbook'}
+            onForm={setGuestForm}
+            onSubmit={submitGuestbook}
+          />
+        )}
+      </div>
     </main>
   );
 }
@@ -1312,6 +1314,7 @@ function useSpeechInput() {
         else interimText += e.results[i][0].transcript;
       }
       setInterim(interimText);
+      if (interimText.trim()) callbacksRef.current.onInterim?.(interimText.trim());
       if (finalText.trim()) {
         setInterim('');
         callbacksRef.current.onResult?.(finalText.trim());
@@ -1353,7 +1356,7 @@ function useSpeechInput() {
     return rec;
   }
 
-  function start({ continuous = true, onResult, onEnd } = {}) {
+  function start({ continuous = true, onResult, onInterim, onEnd } = {}) {
     if (!supported) {
       setVoiceError('Voice input is not supported in this browser. Try Chrome or Edge.');
       return;
@@ -1369,7 +1372,7 @@ function useSpeechInput() {
     }
     setVoiceError('');
     setInterim('');
-    callbacksRef.current = { onResult, onEnd, continuous };
+    callbacksRef.current = { onResult, onInterim, onEnd, continuous };
     keepAliveRef.current = continuous;
     const rec = buildRec();
     recRef.current = rec;
@@ -1385,7 +1388,7 @@ function useSpeechInput() {
     setListening(false);
     try { recRef.current?.abort(); } catch {}
     callbacksRef.current.onEnd?.();
-    callbacksRef.current = { onResult: null, onEnd: null, continuous: true };
+    callbacksRef.current = { onResult: null, onInterim: null, onEnd: null, continuous: true };
   }
 
   return { listening, interim, voiceError, start, stop, supported };
@@ -1753,12 +1756,32 @@ function SoundWaveIcon() {
 const CONVO_CAPTIONS = {
   connecting: 'Getting ready…',
   listening: 'Listening — just talk',
-  thinking: 'Thinking about what you said…',
-  speaking: 'Speaking',
-  paused: 'Paused — tap the mic to resume',
+  thinking: 'Thinking…',
+  speaking: 'Speaking — talk anytime to cut in',
+  idle: 'Tap the orb when you want to talk',
+  paused: 'Paused — tap to resume',
   error: 'Microphone needs permission',
   unsupported: 'Voice conversation is not supported here'
 };
+
+// Turn-taking timing (ms)
+const SILENCE_MS = 1300;      // stop + respond after this much silence post-speech
+const NO_SPEECH_MS = 9000;    // go idle if nothing is said at all
+const BARGE_START_DELAY = 700; // wait before listening for interruptions while speaking
+const BARGE_MIN_CHARS = 5;     // ignore tiny blips as interruptions
+
+function wordSet(text) {
+  return new Set((text.toLowerCase().match(/[a-z']+/g) || []));
+}
+
+// True when recognized speech is mostly the AI's own voice echoing back.
+function looksLikeEcho(heard, spokenWords) {
+  if (spokenWords.size === 0) return false;
+  const words = (heard.toLowerCase().match(/[a-z']+/g) || []);
+  if (!words.length) return true;
+  const overlap = words.filter((w) => spokenWords.has(w)).length / words.length;
+  return overlap >= 0.5;
+}
 
 function ConversationMode({ chatLog, onAppendMessage, onClose }) {
   const speech = useSpeechInput();
@@ -1770,43 +1793,122 @@ function ConversationMode({ chatLog, onAppendMessage, onClose }) {
   const activeRef = useRef(true);
   const mutedRef = useRef(false);
   const phaseRef = useRef('connecting');
-  const capturedRef = useRef('');
   const fns = useRef({});
   const feedRef = useRef(null);
+
+  const heardRef = useRef('');
+  const silenceTimerRef = useRef(null);
+  const noSpeechTimerRef = useRef(null);
+  const bargeTimerRef = useRef(null);
+  const listenModeRef = useRef('turn');
+  const turnDoneRef = useRef(false);
+  const speechStartedRef = useRef(false);
+  const spokenWordsRef = useRef(new Set());
 
   const setPh = useCallback((p) => { phaseRef.current = p; setPhase(p); }, []);
 
   // Keep the turn-loop closures fresh each render without writing refs during render.
   useEffect(() => {
-    fns.current.listen = () => {
-      if (!activeRef.current || mutedRef.current) { setPh('paused'); return; }
-      capturedRef.current = '';
-      setPh('listening');
+    const clearTimers = () => {
+      clearTimeout(silenceTimerRef.current);
+      clearTimeout(noSpeechTimerRef.current);
+      clearTimeout(bargeTimerRef.current);
+    };
+    fns.current.clearTimers = clearTimers;
+
+    const resetSilence = () => {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(() => fns.current.finalizeTurn(), SILENCE_MS);
+    };
+
+    // mode: 'turn' = the user's turn to speak; 'barge' = listen for interruptions while the AI speaks.
+    fns.current.startListen = (mode) => {
+      if (!activeRef.current || mutedRef.current) { setPh('idle'); return; }
+      clearTimers();
+      listenModeRef.current = mode;
+      heardRef.current = '';
+      turnDoneRef.current = false;
+      speechStartedRef.current = false;
+      if (mode === 'turn') {
+        setPh('listening');
+        noSpeechTimerRef.current = setTimeout(() => {
+          if (activeRef.current && !mutedRef.current && !speechStartedRef.current && listenModeRef.current === 'turn') {
+            fns.current.stopListen();
+            setPh('idle');
+          }
+        }, NO_SPEECH_MS);
+      }
       speech.start({
-        continuous: false,
-        onResult: (text) => { capturedRef.current = text; },
-        onEnd: () => {
-          if (!activeRef.current) return;
-          const said = capturedRef.current.trim();
-          capturedRef.current = '';
-          if (said) fns.current.process(said);
-          else if (!mutedRef.current) setTimeout(() => { if (activeRef.current && !mutedRef.current) fns.current.listen(); }, 150);
-          else setPh('paused');
-        }
+        continuous: true,
+        onInterim: (txt) => fns.current.onSpeech(txt, false),
+        onResult: (txt) => fns.current.onSpeech(txt, true),
+        onEnd: () => {}
       });
+    };
+
+    fns.current.onSpeech = (txt, isFinal) => {
+      const value = (txt || '').trim();
+      if (!value) return;
+      if (listenModeRef.current === 'barge') {
+        // ignore the AI's own voice echoing into the mic
+        if (value.length < BARGE_MIN_CHARS) return;
+        if (looksLikeEcho(value, spokenWordsRef.current)) return;
+        tts.cancel();
+        clearTimeout(bargeTimerRef.current);
+        listenModeRef.current = 'turn';
+        speechStartedRef.current = true;
+        setPh('listening');
+        if (isFinal) heardRef.current = (heardRef.current ? `${heardRef.current} ` : '') + value;
+        resetSilence();
+        return;
+      }
+      speechStartedRef.current = true;
+      clearTimeout(noSpeechTimerRef.current);
+      if (isFinal) heardRef.current = (heardRef.current ? `${heardRef.current} ` : '') + value;
+      resetSilence();
+    };
+
+    fns.current.stopListen = () => {
+      clearTimers();
+      try { speech.stop(); } catch {}
+    };
+
+    fns.current.finalizeTurn = () => {
+      if (turnDoneRef.current) return;
+      turnDoneRef.current = true;
+      clearTimers();
+      const said = heardRef.current.trim();
+      heardRef.current = '';
+      try { speech.stop(); } catch {}
+      if (said) fns.current.process(said);
+      else if (activeRef.current && !mutedRef.current) setPh('idle');
     };
 
     fns.current.process = async (text) => {
       onAppendMessage({ role: 'student', content: text });
       setPh('thinking');
       setLiveReply('');
+      spokenWordsRef.current = new Set();
       let speaker = null;
       let acc = '';
       let buffer = '';
       const ensureSpeaker = () => {
         if (!speaker) {
           setPh('speaking');
-          speaker = tts.beginStream({ onEnd: () => { if (activeRef.current) fns.current.listen(); } });
+          speaker = tts.beginStream({
+            onEnd: () => {
+              if (!activeRef.current) return;
+              if (listenModeRef.current === 'barge') return; // user already cut in
+              fns.current.startListen('turn');
+            }
+          });
+          // after a short delay, listen for the user interrupting (barge-in)
+          clearTimeout(bargeTimerRef.current);
+          bargeTimerRef.current = setTimeout(() => {
+            if (activeRef.current && !mutedRef.current && phaseRef.current === 'speaking') {
+              fns.current.startListen('barge');
+            }
+          }, BARGE_START_DELAY);
         }
         return speaker;
       };
@@ -1826,6 +1928,7 @@ function ConversationMode({ chatLog, onAppendMessage, onClose }) {
           if (!chunk) continue;
           acc += chunk;
           buffer += chunk;
+          for (const w of wordSet(chunk)) spokenWordsRef.current.add(w);
           if (activeRef.current) setLiveReply(acc);
           let next;
           while ((next = takeSentence(buffer))) {
@@ -1839,11 +1942,11 @@ function ConversationMode({ chatLog, onAppendMessage, onClose }) {
         if (finalReply) onAppendMessage({ role: 'companion', content: finalReply });
         if (!activeRef.current) { tts.cancel(); return; }
         if (speaker) speaker.end();
-        else fns.current.listen();
+        else fns.current.startListen('turn');
       } catch {
         setLiveReply('');
         tts.cancel();
-        if (activeRef.current) fns.current.listen();
+        if (activeRef.current) fns.current.startListen('turn');
       }
     };
   });
@@ -1851,15 +1954,24 @@ function ConversationMode({ chatLog, onAppendMessage, onClose }) {
   useEffect(() => {
     activeRef.current = true;
     if (!speech.supported || !tts.supported) return undefined;
-    const id = setTimeout(() => fns.current.listen?.(), 250);
+    const f = fns.current;
+    const id = setTimeout(() => f.startListen?.('turn'), 250);
     return () => {
       activeRef.current = false;
       clearTimeout(id);
+      f.clearTimers?.();
       try { speech.stop(); } catch {}
       tts.cancel();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (speech.voiceError) {
+      fns.current.clearTimers?.();
+      tts.cancel();
+    }
+  }, [speech.voiceError, tts]);
 
   useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' });
@@ -1870,10 +1982,11 @@ function ConversationMode({ chatLog, onAppendMessage, onClose }) {
       const next = !prev;
       mutedRef.current = next;
       if (next) {
-        try { speech.stop(); } catch {}
+        fns.current.stopListen?.();
+        tts.cancel();
         setPh('paused');
       } else if (phaseRef.current !== 'speaking' && phaseRef.current !== 'thinking') {
-        fns.current.listen();
+        fns.current.startListen?.('turn');
       }
       return next;
     });
@@ -1883,17 +1996,18 @@ function ConversationMode({ chatLog, onAppendMessage, onClose }) {
     const p = phaseRef.current;
     if (p === 'speaking') {
       tts.cancel();
-      fns.current.listen?.();
+      fns.current.startListen?.('turn');
       return;
     }
-    if (speech.voiceError || p === 'paused') {
+    if (speech.voiceError || p === 'paused' || p === 'idle' || p === 'connecting') {
       if (muted) { setMuted(false); mutedRef.current = false; }
-      fns.current.listen?.();
+      fns.current.startListen?.('turn');
     }
   }
 
   function handleClose() {
     activeRef.current = false;
+    fns.current.clearTimers?.();
     try { speech.stop(); } catch {}
     tts.cancel();
     onClose();
@@ -1926,9 +2040,14 @@ function ConversationMode({ chatLog, onAppendMessage, onClose }) {
           <span className="convo-orb-ring convo-orb-ring-1" />
           <span className="convo-orb-ring convo-orb-ring-2" />
           <span className="convo-orb-ring convo-orb-ring-3" />
+          <span className="convo-orb-eq" aria-hidden>
+            <i /><i /><i /><i /><i />
+          </span>
         </button>
         <p className="convo-caption">{caption}</p>
-        {speech.interim && <p className="convo-interim">“{speech.interim}”</p>}
+        {speech.interim
+          ? <p className="convo-interim">“{speech.interim}”</p>
+          : <p className="convo-subhint">{displayPhase === 'idle' ? 'Tap the orb and start speaking' : 'You can talk over me anytime — headphones work best'}</p>}
       </div>
 
       <div className="convo-feed" ref={feedRef}>

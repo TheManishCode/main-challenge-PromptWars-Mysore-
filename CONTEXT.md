@@ -64,7 +64,7 @@ Postgres tables created in `src/lib/db.js`:
 | `UPSTASH_REDIS_REST_TOKEN` | Production | Rate limiting |
 | `CRON_SECRET` | Production | Cron job auth |
 | `GEMINI_MODEL` | Optional | Defaults to `gemini-2.5-flash` |
-| `GEMINI_VOICE_MODEL` | Optional | Low-latency model for live voice conversation; defaults to `gemini-2.5-flash-lite` |
+| `GEMINI_VOICE_MODEL` | Optional | Model override for live voice conversation; defaults to `GEMINI_MODEL` (`gemini-2.5-flash`) |
 
 OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) are not app env vars. Configure them in the Clerk dashboard under Social Connections.
 
@@ -134,6 +134,13 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - **Feedback:** the helpful-but-direct version handed students a finished plan ("do 25 minutes of Physics") — too much of a final-answer chatbot. The wanted behavior is a coach that talks with the student, asks useful/meaningful questions, understands their mindset, and walks them to their OWN answer.
 - **Both personas (`streamCompanionReply` voice + `chatWithCompanion` text) retuned to purposeful guided discovery:** brief sincere empathy, then lead with curiosity that has a purpose — one meaningful, specific question per reply that deepens understanding of their situation/mindset and narrows them one step toward clarity. Explicitly forbids both hollow aimless questions ("tell me more", "what is underneath that") AND jumping straight to a finished plan. Builds on what they said so they feel understood; lets the student name the next step, which the coach then gently confirms or shapes. Still comforts/grounds first when panic shows. Voice replies 1–3 sentences; text 1–3 short paragraphs.
 - **Verified live (4-turn flow):** "What should I study today?" → "which exam is closest for you?"; "I don't know" → "what feels like the biggest hurdle right now?"; "NEET in two months, biology scares me" → "what specifically about biology feels most overwhelming?"; "I keep forgetting what I read" → "what kind of things do you usually try to do?" — progressive, meaningful questions that build understanding instead of dispensing answers.
+
+### Natural Turn-Taking + Barge-In + Fluid UI (2026-06-21)
+- **Gemini/ChatGPT-style endpointing:** the conversation no longer loops the mic open forever. `useSpeechInput` now runs continuous recognition with an `onInterim` callback; `ConversationMode` drives its own endpointing — after ~1.3s of silence following speech it stops and responds (`SILENCE_MS`), and if nothing is said at all for ~9s it goes to a calm **idle** state ("Tap the orb when you want to talk", `NO_SPEECH_MS`) instead of sitting open and looking broken.
+- **Barge-in (interrupt the AI):** while the companion is speaking, after a short delay (`BARGE_START_DELAY`) a listener opens so the user can talk over it; on real speech the AI's TTS is cancelled and the turn switches straight to listening. An echo filter (`looksLikeEcho`, word-overlap vs the AI's own streamed words, plus a min-length guard) prevents the AI from interrupting itself when the mic picks up its own voice on laptop speakers. Headphones still give the cleanest experience (hinted in the UI).
+- **Model reliability fix:** the live voice path briefly used `gemini-2.5-flash-lite`, which returned empty streams once its free-tier quota was exhausted. `getFastModel()` now defaults to `GEMINI_MODEL` (`gemini-2.5-flash`, proven reliable); `GEMINI_VOICE_MODEL` still overrides. Verified voice replies non-empty across a 4-turn flow.
+- **Conversation UI:** reactive orb with a live equalizer (animates while listening and speaking), idle/listening/thinking/speaking states, prominent live interim transcript, and a subhint about talking over the AI / using headphones.
+- **Site-wide fluid motion (palette unchanged):** added a global motion layer in `globals.css` — animated section transitions (`.section-view` keyed by active section), card/stat/guest-note hover lift, button press/lift feedback, animated nav-pill active state, soft input focus glow, chat-bubble slide-in, smooth theme color transitions, and a `prefers-reduced-motion` guard that disables it all.
 
 ### Relief Room (new section)
 Four tools replacing generic breathing advice:

@@ -37,7 +37,20 @@ export async function POST(request) {
     });
 
     const entries = await listEntries(actor.storageKey, 50, { includeJournal: true });
-    const reply = await chatWithCompanion(message, entries);
+    let reply;
+    try {
+      reply = await chatWithCompanion(message, entries);
+    } catch (modelError) {
+      const usedUserKey = Boolean(request.headers.get('x-mindtrail-api-key'));
+      const raw = String(modelError?.message || '');
+      const quota = /quota|rate|exceed|billing|429/i.test(raw);
+      const friendly = usedUserKey
+        ? 'Could not reach the AI with the API key you added. Please check it in Settings, or remove it to use the default.'
+        : quota
+          ? 'The shared AI key is out of quota right now. Open Settings (gear icon) and add your own API key — any provider works — to keep chatting. It stays only on your device.'
+          : 'The AI is unavailable right now. Try again, or add your own API key in Settings.';
+      return NextResponse.json({ error: friendly }, { status: 503 });
+    }
     await saveChatMessage(actor.storageKey, thread.id, {
       id: randomUUID(),
       role: 'companion',

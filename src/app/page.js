@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/nextjs';
-import SlimeBuddy from './components/SlimeBuddy';
+import OnekoPet, { PET_SKINS } from './components/OnekoPet';
 
 const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
@@ -23,6 +23,7 @@ const MODEL_STORAGE = 'mindtrail-model';
 const BASEURL_STORAGE = 'mindtrail-base-url';
 const PRESET_STORAGE = 'mindtrail-preset';
 const BUDDY_STORAGE = 'mindtrail-buddy-on';
+const PET_SKIN_STORAGE = 'mindtrail-pet-skin';
 const LANG_STORAGE = 'mindtrail-lang';
 
 // Almost every LLM provider exposes an OpenAI-compatible API. Native SDKs are
@@ -181,6 +182,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
   const [buddyOn, setBuddyOn] = useState(() => { try { return localStorage.getItem(BUDDY_STORAGE) !== 'off'; } catch { return true; } });
+  const [petSkin, setPetSkin] = useState(() => { try { return localStorage.getItem(PET_SKIN_STORAGE) || 'cat'; } catch { return 'cat'; } });
   const chatEndRef = useRef(null);
 
   useEffect(() => { installApiKeyHeader(); }, []);
@@ -191,6 +193,11 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
       try { localStorage.setItem(BUDDY_STORAGE, next ? 'on' : 'off'); } catch {}
       return next;
     });
+  }, []);
+
+  const changePetSkin = useCallback((code) => {
+    setPetSkin(code);
+    try { localStorage.setItem(PET_SKIN_STORAGE, code); } catch {}
   }, []);
 
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
@@ -385,7 +392,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
               <strong>{burnoutRisk}%</strong>
             </div>
           )}
-          <SettingsMenu buddyOn={buddyOn} onToggleBuddy={toggleBuddy} />
+          <SettingsMenu buddyOn={buddyOn} onToggleBuddy={toggleBuddy} petSkin={petSkin} onChangePetSkin={changePetSkin} />
           <button className="icon-button" type="button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} title="Toggle theme">
             {theme === 'light' ? 'Dark' : 'Light'}
           </button>
@@ -458,7 +465,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
         )}
       </div>
 
-      {buddyOn && <SlimeBuddy burnoutRisk={burnoutRisk} />}
+      {buddyOn && <OnekoPet skin={petSkin} />}
     </main>
   );
 }
@@ -1356,7 +1363,7 @@ function AuthScreen({ clerkEnabled, onTesterReady }) {
   );
 }
 
-function SettingsMenu({ buddyOn, onToggleBuddy }) {
+function SettingsMenu({ buddyOn, onToggleBuddy, petSkin, onChangePetSkin }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -1368,7 +1375,15 @@ function SettingsMenu({ buddyOn, onToggleBuddy }) {
       >
         <GearIcon />
       </button>
-      {open && <SettingsModal buddyOn={buddyOn} onToggleBuddy={onToggleBuddy} onClose={() => setOpen(false)} />}
+      {open && (
+        <SettingsModal
+          buddyOn={buddyOn}
+          onToggleBuddy={onToggleBuddy}
+          petSkin={petSkin}
+          onChangePetSkin={onChangePetSkin}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </>
   );
 }
@@ -1384,7 +1399,7 @@ function readActive() {
   } catch { return { key: '', preset: '', model: '', baseURL: '' }; }
 }
 
-function SettingsModal({ buddyOn, onToggleBuddy, onClose }) {
+function SettingsModal({ buddyOn, onToggleBuddy, petSkin, onChangePetSkin, onClose }) {
   const [active, setActive] = useState(readActive);
   const initialPreset = active.preset || 'gemini';
   const [presetCode, setPresetCode] = useState(initialPreset);
@@ -1570,7 +1585,7 @@ function SettingsModal({ buddyOn, onToggleBuddy, onClose }) {
             <div className="settings-toggle-row">
               <div>
                 <p className="settings-title">Study buddy</p>
-                <p className="settings-sub">The little slime that roams the page. Drag it, poke it, play with it.</p>
+                <p className="settings-sub">A pixel pet that roams the page and follows your cursor. Drag it around to play.</p>
               </div>
               <button
                 type="button"
@@ -1583,6 +1598,21 @@ function SettingsModal({ buddyOn, onToggleBuddy, onClose }) {
                 <span className="switch-knob" />
               </button>
             </div>
+            {buddyOn && (
+              <div className="pet-grid">
+                {PET_SKINS.map((s) => (
+                  <button
+                    key={s.code}
+                    type="button"
+                    className={`provider-chip${petSkin === s.code ? ' provider-chip-on' : ''}`}
+                    aria-pressed={petSkin === s.code}
+                    onClick={() => onChangePetSkin(s.code)}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </section>
         </div>
       </div>

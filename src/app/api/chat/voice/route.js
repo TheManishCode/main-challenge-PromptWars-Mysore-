@@ -69,7 +69,7 @@ export async function POST(request) {
         if (!full.trim()) {
           full = usedUserKey
             ? "I couldn't reach the AI with the API key you added. Please double-check it in Settings, or remove it to use the default."
-            : "I'm having trouble responding right now. Could you say that again?";
+            : "The app's shared AI key is out of quota right now. Open Settings — the gear icon — and add your own API key from any provider to keep talking. It stays only on your device.";
           controller.enqueue(encoder.encode(full));
         }
         controller.close();

@@ -22,9 +22,20 @@ describe('detectCrisis', () => {
     expect(detectCrisis('Sometimes I want to hurt myself')).toBe(true);
   });
 
-  it('returns false for normal stress language', () => {
+  it('detects acute "I might die" / dying distress', () => {
+    expect(detectCrisis('The overwhelming feeling of I might die')).toBe(true);
+    expect(detectCrisis('I feel like dying right now')).toBe(true);
+    expect(detectCrisis('I feel like I am dying')).toBe(true);
+    expect(detectCrisis('honestly I want to die')).toBe(true);
+    expect(detectCrisis('I am suicidal')).toBe(true);
+    expect(detectCrisis('I just want to end it all')).toBe(true);
+  });
+
+  it('returns false for normal stress language and hyperbole', () => {
     expect(detectCrisis('I am stressed about revision but going to sleep now')).toBe(false);
     expect(detectCrisis('This exam is killing my motivation')).toBe(false);
+    expect(detectCrisis('This syllabus is going to kill me')).toBe(false);
+    expect(detectCrisis('I am dying to see my results')).toBe(false);
   });
 
   it('handles null and undefined input', () => {

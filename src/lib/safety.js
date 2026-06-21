@@ -1,10 +1,18 @@
 const CRISIS_PATTERNS = [
   /\bkill myself\b/i,
+  /\bkill me now\b/i,
   /\bend my life\b/i,
+  /\bend it all\b/i,
+  /\bwant to end it\b/i,
   /\bsuicide\b/i,
+  /\bsuicidal\b/i,
   /\bself[-\s]?harm\b/i,
+  /\bharm myself\b/i,
   /\bhurt myself\b/i,
+  /\bcut(ting)? myself\b/i,
   /\bno reason to live\b/i,
+  /\bnot worth living\b/i,
+  /\bcan'?t live\b/i,
   /\bnothing matters anymore\b/i,
   /\bcan'?t take it anymore\b/i,
   /\bwant to disappear\b/i,
@@ -13,8 +21,18 @@ const CRISIS_PATTERNS = [
   /\bno way out\b/i,
   /\bcan'?t go on\b/i,
   /\bwant to die\b/i,
+  /\bwanna die\b/i,
+  /\bi (might|will|could|gonna|am going to|'?m going to) die\b/i,
+  /\bgoing to die\b/i,
+  /\bgonna die\b/i,
+  /\bfeel like dying\b/i,
+  /\bfeel like i('?m| am)? dying\b/i,
+  /\bi('?m| am) dying\b(?!\s+to\b)/i,
   /\bbetter off dead\b/i,
-  /\bdon'?t want to exist\b/i
+  /\bbetter off without me\b/i,
+  /\bdon'?t want to exist\b/i,
+  /\bdon'?t want to be here\b/i,
+  /\bwant to be dead\b/i
 ];
 
 export function detectCrisis(text) {

@@ -2,6 +2,7 @@ import { headers } from 'next/headers';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateObject, generateText, streamText } from 'ai';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
@@ -155,8 +156,8 @@ function normalizeAnalysis(analysis, input) {
 
 /* ─── Model ──────────────────────────────────────────────────────────────── */
 
-// Detect the LLM provider from an API key's shape so users can bring a key from
-// any provider — not just Gemini.
+// Detect the native LLM provider from an API key's shape (used only when no
+// explicit provider/base URL is given).
 function detectProvider(key) {
   if (!key) return null;
   if (key.startsWith('sk-ant-')) return 'anthropic';
@@ -171,38 +172,60 @@ const DEFAULT_MODELS = {
   anthropic: () => 'claude-3-5-haiku-latest'
 };
 
-// Read the per-request BYO-key headers. The key/provider/model are used
-// transiently for this request only and are never stored or logged.
+function normalizeBaseUrl(raw) {
+  if (!raw) return null;
+  let url;
+  try { url = new URL(raw.trim()); } catch { return null; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  // Only allow plain http for local model servers (Ollama / LM Studio / llama.cpp).
+  const isLocal = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]'].includes(url.hostname);
+  if (url.protocol === 'http:' && !isLocal) return null;
+  return url.toString().replace(/\/+$/, '');
+}
+
+// Build a model instance for any provider. A base URL routes through the
+// OpenAI-compatible adapter, which covers virtually every provider (OpenRouter,
+// Groq, DeepSeek, Mistral, Cerebras, Fireworks, NVIDIA NIM, xAI, Together,
+// Moonshot/Kimi, Z.ai, local Ollama / LM Studio / llama.cpp, …). Gemini,
+// OpenAI, and Anthropic use their native SDKs.
+export function buildModelFor({ provider, key, model, baseURL }) {
+  const cleanBase = normalizeBaseUrl(baseURL);
+  if (cleanBase) {
+    const compat = createOpenAICompatible({
+      name: 'byo',
+      apiKey: key || 'local',
+      baseURL: cleanBase
+    });
+    return compat(model || 'gpt-4o-mini');
+  }
+  if (provider === 'openai') return createOpenAI({ apiKey: key })(model || DEFAULT_MODELS.openai());
+  if (provider === 'anthropic') return createAnthropic({ apiKey: key })(model || DEFAULT_MODELS.anthropic());
+  return createGoogleGenerativeAI({ apiKey: key })(model || DEFAULT_MODELS.google());
+}
+
+// Read the per-request BYO headers. Used transiently for this request only;
+// never stored or logged.
 async function readKeyHeaders() {
   try {
     const store = await headers();
     return {
       key: store.get('x-mindtrail-api-key')?.trim() || null,
       provider: store.get('x-mindtrail-provider')?.trim()?.toLowerCase() || null,
-      model: store.get('x-mindtrail-model')?.trim() || null
+      model: store.get('x-mindtrail-model')?.trim() || null,
+      baseURL: store.get('x-mindtrail-base-url')?.trim() || null
     };
   } catch {
-    return { key: null, provider: null, model: null };
+    return { key: null, provider: null, model: null, baseURL: null };
   }
 }
 
-function buildModel(provider, key, model) {
-  if (provider === 'openai') {
-    return createOpenAI({ apiKey: key })(model || DEFAULT_MODELS.openai());
-  }
-  if (provider === 'anthropic') {
-    return createAnthropic({ apiKey: key })(model || DEFAULT_MODELS.anthropic());
-  }
-  return createGoogleGenerativeAI({ apiKey: key })(model || DEFAULT_MODELS.google());
-}
-
-// Resolve the model for THIS request. A user-supplied key (any provider) takes
-// precedence; otherwise fall back to the server env Gemini key.
+// Resolve the model for THIS request. A user-supplied provider/key (any provider)
+// takes precedence; otherwise fall back to the server env Gemini key.
 async function resolveModel({ fast = false } = {}) {
-  const { key, provider: hinted, model } = await readKeyHeaders();
-  if (key) {
-    const provider = hinted || detectProvider(key) || 'google';
-    return buildModel(provider, key, model);
+  const { key, provider: hinted, model, baseURL } = await readKeyHeaders();
+  if (key || baseURL) {
+    const provider = hinted || detectProvider(key) || 'openai';
+    return buildModelFor({ provider, key, model, baseURL });
   }
   const envFast = process.env.GEMINI_VOICE_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   const envModel = fast ? envFast : (process.env.GEMINI_MODEL || 'gemini-2.5-flash');
@@ -216,6 +239,24 @@ async function getModel() {
 // Model for the live voice conversation (lower-latency env default).
 async function getFastModel() {
   return resolveModel({ fast: true });
+}
+
+// Validate a user's provider/key/model with a tiny round-trip. Returns
+// { ok, model } or { ok:false, error }. Never logs the key.
+export async function testProvider({ provider, key, model, baseURL }) {
+  try {
+    const m = buildModelFor({ provider, key, model, baseURL });
+    const result = await generateText({
+      model: m,
+      prompt: 'Reply with the single word: ok',
+      maxOutputTokens: 8,
+      temperature: 0
+    });
+    return { ok: true, model: m.modelId || model || null, sample: (result.text || '').trim().slice(0, 40) };
+  } catch (error) {
+    const message = (error?.message || 'Could not reach this provider.').slice(0, 200);
+    return { ok: false, error: message };
+  }
 }
 
 /* ─── Entry Analysis ─────────────────────────────────────────────────────── */

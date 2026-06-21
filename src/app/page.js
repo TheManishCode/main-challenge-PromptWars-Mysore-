@@ -20,28 +20,44 @@ const INITIAL_FORM = { mood: 5, energy: 5, sleepHours: 7, exam: '', journal: '' 
 const API_KEY_STORAGE = 'mindtrail-gemini-key';
 const PROVIDER_STORAGE = 'mindtrail-provider';
 const MODEL_STORAGE = 'mindtrail-model';
+const BASEURL_STORAGE = 'mindtrail-base-url';
+const PRESET_STORAGE = 'mindtrail-preset';
 const BUDDY_STORAGE = 'mindtrail-buddy-on';
 const LANG_STORAGE = 'mindtrail-lang';
 
-const PROVIDERS = [
-  { code: 'auto', label: 'Auto-detect from key' },
-  { code: 'google', label: 'Google Gemini', hint: 'AIza…' },
-  { code: 'openai', label: 'OpenAI (GPT)', hint: 'sk-…' },
-  { code: 'anthropic', label: 'Anthropic (Claude)', hint: 'sk-ant-…' }
+// Almost every LLM provider exposes an OpenAI-compatible API. Native SDKs are
+// used for Gemini / OpenAI / Anthropic; everything else routes through a base
+// URL. "Custom" lets the user point at literally any provider or self-host.
+const PRESETS = [
+  { code: 'gemini', label: 'Google Gemini', kind: 'native', server: 'google', model: 'gemini-2.5-flash', keyUrl: 'https://aistudio.google.com/app/apikey' },
+  { code: 'openai', label: 'OpenAI', kind: 'native', server: 'openai', model: 'gpt-4o-mini', keyUrl: 'https://platform.openai.com/api-keys' },
+  { code: 'anthropic', label: 'Anthropic Claude', kind: 'native', server: 'anthropic', model: 'claude-3-5-haiku-latest', keyUrl: 'https://console.anthropic.com/settings/keys' },
+  { code: 'openrouter', label: 'OpenRouter', kind: 'compat', baseURL: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini', keyUrl: 'https://openrouter.ai/keys' },
+  { code: 'groq', label: 'Groq', kind: 'compat', baseURL: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', keyUrl: 'https://console.groq.com/keys' },
+  { code: 'deepseek', label: 'DeepSeek', kind: 'compat', baseURL: 'https://api.deepseek.com/v1', model: 'deepseek-chat', keyUrl: 'https://platform.deepseek.com/api_keys' },
+  { code: 'mistral', label: 'Mistral', kind: 'compat', baseURL: 'https://api.mistral.ai/v1', model: 'mistral-small-latest', keyUrl: 'https://console.mistral.ai/api-keys' },
+  { code: 'cerebras', label: 'Cerebras', kind: 'compat', baseURL: 'https://api.cerebras.ai/v1', model: 'llama3.1-8b', keyUrl: 'https://cloud.cerebras.ai' },
+  { code: 'fireworks', label: 'Fireworks', kind: 'compat', baseURL: 'https://api.fireworks.ai/inference/v1', model: 'accounts/fireworks/models/llama-v3p1-8b-instruct', keyUrl: 'https://fireworks.ai/account/api-keys' },
+  { code: 'together', label: 'Together AI', kind: 'compat', baseURL: 'https://api.together.xyz/v1', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', keyUrl: 'https://api.together.ai/settings/api-keys' },
+  { code: 'nvidia', label: 'NVIDIA NIM', kind: 'compat', baseURL: 'https://integrate.api.nvidia.com/v1', model: 'meta/llama-3.1-8b-instruct', keyUrl: 'https://build.nvidia.com' },
+  { code: 'xai', label: 'xAI Grok', kind: 'compat', baseURL: 'https://api.x.ai/v1', model: 'grok-2-latest', keyUrl: 'https://console.x.ai' },
+  { code: 'perplexity', label: 'Perplexity', kind: 'compat', baseURL: 'https://api.perplexity.ai', model: 'sonar', keyUrl: 'https://www.perplexity.ai/settings/api' },
+  { code: 'moonshot', label: 'Moonshot / Kimi', kind: 'compat', baseURL: 'https://api.moonshot.ai/v1', model: 'moonshot-v1-8k', keyUrl: 'https://platform.moonshot.ai/console/api-keys' },
+  { code: 'zai', label: 'Z.ai (GLM)', kind: 'compat', baseURL: 'https://api.z.ai/api/paas/v4', model: 'glm-4-flash', keyUrl: 'https://z.ai' },
+  { code: 'ollama', label: 'Ollama (local)', kind: 'local', baseURL: 'http://localhost:11434/v1', model: 'llama3.2', keyless: true },
+  { code: 'lmstudio', label: 'LM Studio (local)', kind: 'local', baseURL: 'http://localhost:1234/v1', model: '', keyless: true },
+  { code: 'llamacpp', label: 'llama.cpp (local)', kind: 'local', baseURL: 'http://localhost:8080/v1', model: '', keyless: true },
+  { code: 'custom', label: 'Custom / Any provider', kind: 'custom', baseURL: '', model: '' }
 ];
 
-const PROVIDER_DEFAULT_MODEL = {
-  google: 'gemini-2.5-flash',
-  openai: 'gpt-4o-mini',
-  anthropic: 'claude-3-5-haiku-latest'
-};
+function presetByCode(code) {
+  return PRESETS.find((p) => p.code === code) || null;
+}
 
-function detectProviderFromKey(key) {
-  if (!key) return null;
-  if (key.startsWith('sk-ant-')) return 'anthropic';
-  if (key.startsWith('AIza')) return 'google';
-  if (key.startsWith('sk-')) return 'openai';
-  return null;
+function serverProviderFor(preset) {
+  if (!preset) return 'openai-compatible';
+  if (preset.kind === 'native') return preset.server;
+  return 'openai-compatible';
 }
 
 const LANGUAGES = [
@@ -105,8 +121,10 @@ function installApiKeyHeader() {
           headers.set('x-mindtrail-api-key', key);
           const provider = localStorage.getItem(PROVIDER_STORAGE);
           const model = localStorage.getItem(MODEL_STORAGE);
+          const baseURL = localStorage.getItem(BASEURL_STORAGE);
           if (provider && provider !== 'auto') headers.set('x-mindtrail-provider', provider);
           if (model) headers.set('x-mindtrail-model', model);
+          if (baseURL) headers.set('x-mindtrail-base-url', baseURL);
           return original(input, { ...init, headers });
         }
       }
@@ -1340,136 +1358,215 @@ function AuthScreen({ clerkEnabled, onTesterReady }) {
 
 function SettingsMenu({ buddyOn, onToggleBuddy }) {
   const [open, setOpen] = useState(false);
-  const [savedKey, setSavedKey] = useState(() => { try { return localStorage.getItem(API_KEY_STORAGE) || ''; } catch { return ''; } });
-  const [savedProvider, setSavedProvider] = useState(() => { try { return localStorage.getItem(PROVIDER_STORAGE) || 'auto'; } catch { return 'auto'; } });
-  const [draft, setDraft] = useState('');
-  const [providerSel, setProviderSel] = useState('auto');
-  const [modelDraft, setModelDraft] = useState('');
-  const [note, setNote] = useState('');
+  return (
+    <>
+      <button
+        className="icon-button settings-trigger"
+        type="button"
+        aria-label="Settings"
+        onClick={() => setOpen(true)}
+      >
+        <GearIcon />
+      </button>
+      {open && <SettingsModal buddyOn={buddyOn} onToggleBuddy={onToggleBuddy} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function readActive() {
+  try {
+    return {
+      key: localStorage.getItem(API_KEY_STORAGE) || '',
+      preset: localStorage.getItem(PRESET_STORAGE) || '',
+      model: localStorage.getItem(MODEL_STORAGE) || '',
+      baseURL: localStorage.getItem(BASEURL_STORAGE) || ''
+    };
+  } catch { return { key: '', preset: '', model: '', baseURL: '' }; }
+}
+
+function SettingsModal({ buddyOn, onToggleBuddy, onClose }) {
+  const [active, setActive] = useState(readActive);
+  const initialPreset = active.preset || 'gemini';
+  const [presetCode, setPresetCode] = useState(initialPreset);
+  const [keyDraft, setKeyDraft] = useState('');
+  const [modelDraft, setModelDraft] = useState(() => presetByCode(initialPreset)?.model || '');
+  const [baseDraft, setBaseDraft] = useState(() => presetByCode(initialPreset)?.baseURL || '');
+  const [status, setStatus] = useState(null); // { kind: 'ok'|'err'|'busy'|'info', text }
   const [lang, setLang] = useState(() => { try { return localStorage.getItem(LANG_STORAGE) || 'auto'; } catch { return 'auto'; } });
-  const ref = useRef(null);
+
+  const preset = presetByCode(presetCode);
+  const isLocal = preset?.kind === 'local';
+  const isCustom = preset?.kind === 'custom';
+  const needsKey = !preset?.keyless;
+  const showBaseUrl = isCustom || isLocal;
+
+  function selectPreset(code) {
+    const p = presetByCode(code);
+    setPresetCode(code);
+    setModelDraft(p?.model || '');
+    setBaseDraft(p?.baseURL || '');
+    setStatus(null);
+  }
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   function changeLang(value) {
     setLang(value);
     try { localStorage.setItem(LANG_STORAGE, value); } catch {}
   }
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
-
-  const effectiveProvider = providerSel === 'auto' ? detectProviderFromKey(draft.trim()) : providerSel;
-
-  function saveKey() {
-    const value = draft.trim();
-    if (value.length < 16) { setNote('That key looks too short.'); return; }
-    const provider = providerSel === 'auto' ? (detectProviderFromKey(value) || 'auto') : providerSel;
-    if (provider === 'auto') { setNote("Couldn't detect the provider — please pick one below."); return; }
-    try {
-      localStorage.setItem(API_KEY_STORAGE, value);
-      localStorage.setItem(PROVIDER_STORAGE, provider);
-      if (modelDraft.trim()) localStorage.setItem(MODEL_STORAGE, modelDraft.trim());
-      else localStorage.removeItem(MODEL_STORAGE);
-    } catch {}
-    setSavedKey(value);
-    setSavedProvider(provider);
-    setDraft('');
-    setModelDraft('');
-    const name = PROVIDERS.find((p) => p.code === provider)?.label || provider;
-    setNote(`Saved on this device. Using ${name} for all AI features.`);
+  function buildPayload() {
+    return {
+      key: needsKey ? keyDraft.trim() : 'local',
+      provider: serverProviderFor(preset),
+      model: modelDraft.trim() || preset?.model || '',
+      baseURL: showBaseUrl ? baseDraft.trim() : (preset?.baseURL || '')
+    };
   }
 
-  function removeKey() {
+  async function testProvider() {
+    if (needsKey && !keyDraft.trim()) { setStatus({ kind: 'err', text: 'Enter your API key first.' }); return; }
+    if (showBaseUrl && !baseDraft.trim()) { setStatus({ kind: 'err', text: 'Enter the base URL first.' }); return; }
+    setStatus({ kind: 'busy', text: 'Testing connection…' });
     try {
-      localStorage.removeItem(API_KEY_STORAGE);
-      localStorage.removeItem(PROVIDER_STORAGE);
-      localStorage.removeItem(MODEL_STORAGE);
-    } catch {}
-    setSavedKey('');
-    setSavedProvider('auto');
-    setDraft('');
-    setModelDraft('');
-    setProviderSel('auto');
-    setNote('Removed. Falling back to the app default key.');
+      const res = await fetch('/api/provider-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildPayload())
+      });
+      const data = await res.json();
+      if (data.ok) setStatus({ kind: 'ok', text: `Connected ✓ ${data.model || ''}`.trim() });
+      else setStatus({ kind: 'err', text: data.error || 'Could not connect.' });
+    } catch {
+      setStatus({ kind: 'err', text: 'Could not reach the provider.' });
+    }
   }
 
-  const masked = savedKey ? `${savedKey.slice(0, 4)}••••••••${savedKey.slice(-4)}` : '';
-  const savedProviderLabel = PROVIDERS.find((p) => p.code === savedProvider)?.label || savedProvider;
+  function save() {
+    const payload = buildPayload();
+    if (needsKey && payload.key.length < 8) { setStatus({ kind: 'err', text: 'That key looks too short.' }); return; }
+    if (showBaseUrl && !payload.baseURL) { setStatus({ kind: 'err', text: 'Enter the base URL.' }); return; }
+    try {
+      localStorage.setItem(API_KEY_STORAGE, payload.key);
+      localStorage.setItem(PROVIDER_STORAGE, payload.provider);
+      localStorage.setItem(PRESET_STORAGE, presetCode);
+      if (payload.model) localStorage.setItem(MODEL_STORAGE, payload.model); else localStorage.removeItem(MODEL_STORAGE);
+      if (payload.baseURL) localStorage.setItem(BASEURL_STORAGE, payload.baseURL); else localStorage.removeItem(BASEURL_STORAGE);
+    } catch {}
+    setActive(readActive());
+    setKeyDraft('');
+    setStatus({ kind: 'ok', text: `Saved. Using ${preset?.label} for all AI features.` });
+  }
+
+  function remove() {
+    try {
+      [API_KEY_STORAGE, PROVIDER_STORAGE, PRESET_STORAGE, MODEL_STORAGE, BASEURL_STORAGE].forEach((k) => localStorage.removeItem(k));
+    } catch {}
+    setActive(readActive());
+    setKeyDraft('');
+    setStatus({ kind: 'info', text: 'Removed. Using the app default again.' });
+  }
+
+  const activePreset = active.preset ? presetByCode(active.preset) : null;
+  const masked = active.key && active.key !== 'local' ? `${active.key.slice(0, 4)}••••••${active.key.slice(-3)}` : 'no key (local)';
 
   return (
-    <div className="settings-menu" ref={ref}>
-      <button
-        className="icon-button settings-trigger"
-        type="button"
-        aria-expanded={open}
-        aria-label="Settings"
-        onClick={() => setOpen((c) => !c)}
-      >
-        <GearIcon />
-      </button>
-      {open && (
-        <div className="settings-popover" role="dialog" aria-label="Settings">
-          <div className="settings-block">
-            <p className="settings-title">Your own API key</p>
-            <p className="settings-sub">Bring a key from any provider — Gemini, OpenAI (GPT), or Anthropic (Claude). The provider is auto-detected from the key. Stored only in this browser, never in our database, and used until you remove it.</p>
-            {savedKey ? (
-              <>
-                <div className="key-row">
-                  <code className="key-masked">{masked}</code>
-                  <button type="button" className="key-btn key-btn-remove" onClick={removeKey}>Remove</button>
+    <div className="modal-scrim" onMouseDown={onClose}>
+      <div className="settings-modal" role="dialog" aria-modal="true" aria-label="Settings" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="settings-modal-head">
+          <h2>Settings</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close settings">✕</button>
+        </div>
+
+        <div className="settings-modal-body">
+          <section className="settings-section">
+            <p className="settings-title">AI provider</p>
+            <p className="settings-sub">Use your own key from <strong>any</strong> provider. Most speak the OpenAI-compatible API, so almost anything works — or pick “Custom” and paste any base URL. Stored only in this browser, never in our database, kept until you remove it.</p>
+
+            {active.key ? (
+              <div className="active-card">
+                <div className="active-card-main">
+                  <span className="active-dot" />
+                  <div>
+                    <p className="active-name">{activePreset?.label || active.provider || 'Custom provider'}</p>
+                    <p className="active-meta">{(active.model || activePreset?.model || 'default model')} · <code>{masked}</code></p>
+                  </div>
                 </div>
-                <p className="settings-note">Active provider: {savedProviderLabel}</p>
-              </>
+                <button type="button" className="key-btn key-btn-remove" onClick={remove}>Remove</button>
+              </div>
             ) : (
-              <>
-                <div className="key-row">
-                  <input
-                    className="input key-input"
-                    type="password"
-                    value={draft}
-                    onChange={(e) => { setDraft(e.target.value); setNote(''); }}
-                    placeholder="Paste any LLM API key…"
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <button type="button" className="key-btn key-btn-insert" onClick={saveKey} disabled={!draft.trim()}>Insert</button>
-                </div>
-                <div className="key-grid">
-                  <select className="input key-select" value={providerSel} onChange={(e) => setProviderSel(e.target.value)} aria-label="Provider">
-                    {PROVIDERS.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
-                  </select>
-                  <input
-                    className="input key-model"
-                    value={modelDraft}
-                    onChange={(e) => setModelDraft(e.target.value)}
-                    placeholder={effectiveProvider ? `model (default: ${PROVIDER_DEFAULT_MODEL[effectiveProvider]})` : 'model (optional)'}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </div>
-                {effectiveProvider && <p className="settings-note">Detected: {PROVIDERS.find((p) => p.code === effectiveProvider)?.label}</p>}
-              </>
+              <p className="settings-note">No custom key set — using the app’s default Gemini key.</p>
             )}
-            {note && <p className="settings-note">{note}</p>}
-            <a className="settings-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Get a free Gemini key →</a>
-          </div>
 
-          <div className="settings-divider" />
+            <div className="provider-grid" aria-label="Choose a provider">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.code}
+                  type="button"
+                  className={`provider-chip${presetCode === p.code ? ' provider-chip-on' : ''}`}
+                  data-kind={p.kind}
+                  aria-pressed={presetCode === p.code}
+                  onClick={() => selectPreset(p.code)}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
 
-          <div className="settings-block">
+            <div className="provider-fields">
+              {needsKey && (
+                <input
+                  className="input"
+                  type="password"
+                  value={keyDraft}
+                  onChange={(e) => { setKeyDraft(e.target.value); setStatus(null); }}
+                  placeholder={`${preset?.label || 'Provider'} API key`}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              )}
+              {showBaseUrl && (
+                <input
+                  className="input"
+                  value={baseDraft}
+                  onChange={(e) => { setBaseDraft(e.target.value); setStatus(null); }}
+                  placeholder="Base URL (e.g. https://api.example.com/v1)"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              )}
+              <input
+                className="input"
+                value={modelDraft}
+                onChange={(e) => setModelDraft(e.target.value)}
+                placeholder={preset?.model ? `model (default: ${preset.model})` : 'model name'}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+
+            <div className="provider-actions">
+              <button type="button" className="key-btn key-btn-ghost" onClick={testProvider}>Test</button>
+              <button type="button" className="key-btn key-btn-insert" onClick={save}>Insert</button>
+              {preset?.keyUrl && <a className="settings-link" href={preset.keyUrl} target="_blank" rel="noreferrer">Get a key →</a>}
+            </div>
+
+            {status && <p className={`settings-status status-${status.kind}`}>{status.text}</p>}
+          </section>
+
+          <section className="settings-section">
             <p className="settings-title">Conversation language</p>
             <p className="settings-sub">Talk and chat in your language. The companion replies in the same language, and voice listens for it.</p>
-            <select className="input settings-select" value={lang} onChange={(e) => changeLang(e.target.value)} aria-label="Conversation language">
+            <select className="input" value={lang} onChange={(e) => changeLang(e.target.value)} aria-label="Conversation language">
               {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
             </select>
-          </div>
+          </section>
 
-          <div className="settings-divider" />
-
-          <div className="settings-block">
+          <section className="settings-section">
             <div className="settings-toggle-row">
               <div>
                 <p className="settings-title">Study buddy</p>
@@ -1486,9 +1583,9 @@ function SettingsMenu({ buddyOn, onToggleBuddy }) {
                 <span className="switch-knob" />
               </button>
             </div>
-          </div>
+          </section>
         </div>
-      )}
+      </div>
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/nextjs';
+import SlimeBuddy from './components/SlimeBuddy';
 
 const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
@@ -15,6 +16,78 @@ const SECTIONS = [
 ];
 
 const INITIAL_FORM = { mood: 5, energy: 5, sleepHours: 7, exam: '', journal: '' };
+
+const API_KEY_STORAGE = 'mindtrail-gemini-key';
+const BUDDY_STORAGE = 'mindtrail-buddy-on';
+const LANG_STORAGE = 'mindtrail-lang';
+
+const LANGUAGES = [
+  { code: 'auto', label: 'Auto-detect' },
+  { code: 'en-IN', label: 'English' },
+  { code: 'hi-IN', label: 'हिन्दी Hindi' },
+  { code: 'bn-IN', label: 'বাংলা Bengali' },
+  { code: 'ta-IN', label: 'தமிழ் Tamil' },
+  { code: 'te-IN', label: 'తెలుగు Telugu' },
+  { code: 'mr-IN', label: 'मराठी Marathi' },
+  { code: 'kn-IN', label: 'ಕನ್ನಡ Kannada' },
+  { code: 'gu-IN', label: 'ગુજરાતી Gujarati' },
+  { code: 'ml-IN', label: 'മലയാളം Malayalam' },
+  { code: 'pa-IN', label: 'ਪੰਜਾਬੀ Punjabi' },
+  { code: 'ur-IN', label: 'اردو Urdu' }
+];
+
+function getPreferredLang() {
+  try {
+    const stored = localStorage.getItem(LANG_STORAGE);
+    if (stored && stored !== 'auto') return stored;
+  } catch {}
+  if (typeof navigator !== 'undefined' && navigator.language) return navigator.language;
+  return 'en-US';
+}
+
+// Map Indic script ranges to a BCP-47 tag so TTS picks a matching voice.
+const SCRIPT_LANG = [
+  [/[ऀ-ॿ]/, 'hi-IN'],
+  [/[ঀ-৿]/, 'bn-IN'],
+  [/[஀-௿]/, 'ta-IN'],
+  [/[ఀ-౿]/, 'te-IN'],
+  [/[ಀ-೿]/, 'kn-IN'],
+  [/[ഀ-ൿ]/, 'ml-IN'],
+  [/[઀-૿]/, 'gu-IN'],
+  [/[਀-੿]/, 'pa-IN'],
+  [/[؀-ۿ]/, 'ur-IN']
+];
+
+function detectLang(text, fallback) {
+  for (const [re, lang] of SCRIPT_LANG) {
+    if (re.test(text)) return lang;
+  }
+  return fallback;
+}
+
+// Inject a user-supplied Gemini key (stored only in this browser) as a header on
+// our own /api requests. Patches fetch once; never touches third-party requests.
+function installApiKeyHeader() {
+  if (typeof window === 'undefined' || window.__mindtrailFetchPatched) return;
+  const original = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    try {
+      const key = localStorage.getItem(API_KEY_STORAGE);
+      const rawUrl = typeof input === 'string' ? input : input?.url;
+      if (key && typeof rawUrl === 'string') {
+        const url = new URL(rawUrl, window.location.origin);
+        // Only ever attach the key to our own same-origin API — never to third parties.
+        if (url.origin === window.location.origin && url.pathname.startsWith('/api/')) {
+          const headers = new Headers(init.headers || (typeof input !== 'string' ? input.headers : undefined));
+          headers.set('x-mindtrail-api-key', key);
+          return original(input, { ...init, headers });
+        }
+      }
+    } catch {}
+    return original(input, init);
+  };
+  window.__mindtrailFetchPatched = true;
+}
 
 function formatDate(dateStr) {
   if (!dateStr) return 'Just now';
@@ -62,7 +135,18 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   const [guestForm, setGuestForm] = useState({ authorName: '', message: '' });
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
+  const [buddyOn, setBuddyOn] = useState(() => { try { return localStorage.getItem(BUDDY_STORAGE) !== 'off'; } catch { return true; } });
   const chatEndRef = useRef(null);
+
+  useEffect(() => { installApiKeyHeader(); }, []);
+
+  const toggleBuddy = useCallback(() => {
+    setBuddyOn((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(BUDDY_STORAGE, next ? 'on' : 'off'); } catch {}
+      return next;
+    });
+  }, []);
 
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
 
@@ -256,6 +340,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
               <strong>{burnoutRisk}%</strong>
             </div>
           )}
+          <SettingsMenu buddyOn={buddyOn} onToggleBuddy={toggleBuddy} />
           <button className="icon-button" type="button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} title="Toggle theme">
             {theme === 'light' ? 'Dark' : 'Light'}
           </button>
@@ -327,6 +412,8 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
           />
         )}
       </div>
+
+      {buddyOn && <SlimeBuddy burnoutRisk={burnoutRisk} />}
     </main>
   );
 }
@@ -1224,6 +1311,128 @@ function AuthScreen({ clerkEnabled, onTesterReady }) {
   );
 }
 
+function SettingsMenu({ buddyOn, onToggleBuddy }) {
+  const [open, setOpen] = useState(false);
+  const [savedKey, setSavedKey] = useState(() => { try { return localStorage.getItem(API_KEY_STORAGE) || ''; } catch { return ''; } });
+  const [draft, setDraft] = useState('');
+  const [note, setNote] = useState('');
+  const [lang, setLang] = useState(() => { try { return localStorage.getItem(LANG_STORAGE) || 'auto'; } catch { return 'auto'; } });
+  const ref = useRef(null);
+
+  function changeLang(value) {
+    setLang(value);
+    try { localStorage.setItem(LANG_STORAGE, value); } catch {}
+  }
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  function saveKey() {
+    const value = draft.trim();
+    if (value.length < 20) { setNote('That key looks too short.'); return; }
+    try { localStorage.setItem(API_KEY_STORAGE, value); } catch {}
+    setSavedKey(value);
+    setDraft('');
+    setNote('Saved on this device. It will be used for all AI features.');
+  }
+
+  function removeKey() {
+    try { localStorage.removeItem(API_KEY_STORAGE); } catch {}
+    setSavedKey('');
+    setDraft('');
+    setNote('Removed. Falling back to the app default key.');
+  }
+
+  const masked = savedKey ? `${savedKey.slice(0, 4)}••••••••${savedKey.slice(-4)}` : '';
+
+  return (
+    <div className="settings-menu" ref={ref}>
+      <button
+        className="icon-button settings-trigger"
+        type="button"
+        aria-expanded={open}
+        aria-label="Settings"
+        onClick={() => setOpen((c) => !c)}
+      >
+        <GearIcon />
+      </button>
+      {open && (
+        <div className="settings-popover" role="dialog" aria-label="Settings">
+          <div className="settings-block">
+            <p className="settings-title">Your Gemini API key</p>
+            <p className="settings-sub">Use your own key for all AI features. Stored only in this browser — never sent to or saved in our database. It stays until you remove it.</p>
+            {savedKey ? (
+              <div className="key-row">
+                <code className="key-masked">{masked}</code>
+                <button type="button" className="key-btn key-btn-remove" onClick={removeKey}>Remove</button>
+              </div>
+            ) : (
+              <div className="key-row">
+                <input
+                  className="input key-input"
+                  type="password"
+                  value={draft}
+                  onChange={(e) => { setDraft(e.target.value); setNote(''); }}
+                  placeholder="AIza…"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button type="button" className="key-btn key-btn-insert" onClick={saveKey} disabled={!draft.trim()}>Insert</button>
+              </div>
+            )}
+            {note && <p className="settings-note">{note}</p>}
+            <a className="settings-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Get a free key →</a>
+          </div>
+
+          <div className="settings-divider" />
+
+          <div className="settings-block">
+            <p className="settings-title">Conversation language</p>
+            <p className="settings-sub">Talk and chat in your language. The companion replies in the same language, and voice listens for it.</p>
+            <select className="input settings-select" value={lang} onChange={(e) => changeLang(e.target.value)} aria-label="Conversation language">
+              {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+            </select>
+          </div>
+
+          <div className="settings-divider" />
+
+          <div className="settings-block">
+            <div className="settings-toggle-row">
+              <div>
+                <p className="settings-title">Study buddy</p>
+                <p className="settings-sub">The little slime that roams the page. Drag it, poke it, play with it.</p>
+              </div>
+              <button
+                type="button"
+                className={`switch${buddyOn ? ' switch-on' : ''}`}
+                role="switch"
+                aria-checked={buddyOn}
+                aria-label="Toggle study buddy"
+                onClick={onToggleBuddy}
+              >
+                <span className="switch-knob" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
 function TesterProfileMenu({ onSignOut, loading }) {
   const [open, setOpen] = useState(false);
   return (
@@ -1289,6 +1498,7 @@ function useSpeechInput() {
 
   const recRef = useRef(null);
   const keepAliveRef = useRef(false);
+  const langRef = useRef('en-US');
   const callbacksRef = useRef({ onResult: null, onEnd: null, continuous: true });
 
   useEffect(() => {
@@ -1303,7 +1513,7 @@ function useSpeechInput() {
     const rec = new SR();
     rec.continuous = callbacksRef.current.continuous;
     rec.interimResults = true;
-    rec.lang = 'en-US';
+    rec.lang = langRef.current || 'en-US';
     rec.maxAlternatives = 1;
 
     rec.onresult = (e) => {
@@ -1356,11 +1566,12 @@ function useSpeechInput() {
     return rec;
   }
 
-  function start({ continuous = true, onResult, onInterim, onEnd } = {}) {
+  function start({ continuous = true, onResult, onInterim, onEnd, lang } = {}) {
     if (!supported) {
       setVoiceError('Voice input is not supported in this browser. Try Chrome or Edge.');
       return;
     }
+    langRef.current = lang || getPreferredLang();
     keepAliveRef.current = false;
     const prev = recRef.current;
     if (prev) {
@@ -1405,13 +1616,16 @@ const PREFERRED_VOICES = [
   'Google UK English Female'
 ];
 
-function pickVoice(voices) {
+function pickVoiceForLang(voices, lang) {
   if (!voices.length) return null;
-  const byName = voices.find((v) => PREFERRED_VOICES.some((n) => v.name.includes(n)));
+  const base = (lang || 'en').slice(0, 2).toLowerCase();
+  if (base === 'en') {
+    const byName = voices.find((v) => PREFERRED_VOICES.some((n) => v.name.includes(n)));
+    if (byName) return byName;
+  }
   return (
-    byName ||
-    voices.find((v) => v.lang === 'en-US' && /female|aria|jenny|samantha|zira/i.test(v.name)) ||
-    voices.find((v) => v.lang === 'en-US') ||
+    voices.find((v) => v.lang?.toLowerCase() === (lang || '').toLowerCase()) ||
+    voices.find((v) => v.lang?.toLowerCase().startsWith(base)) ||
     voices.find((v) => v.lang?.startsWith('en')) ||
     voices[0]
   );
@@ -1426,7 +1640,8 @@ function takeSentence(buffer) {
 
 function useSpeechOutput() {
   const [speaking, setSpeaking] = useState(false);
-  const voiceRef = useRef(null);
+  const voicesRef = useRef([]);
+  const prefLangRef = useRef('en-US');
   const queueRef = useRef([]);
   const playingRef = useRef(false);
   const endedRef = useRef(true);
@@ -1442,7 +1657,7 @@ function useSpeechOutput() {
     if (!supported) return undefined;
     const choose = () => {
       const voices = window.speechSynthesis.getVoices();
-      if (voices.length) voiceRef.current = pickVoice(voices);
+      if (voices.length) voicesRef.current = voices;
     };
     choose();
     window.speechSynthesis.addEventListener('voiceschanged', choose);
@@ -1468,8 +1683,10 @@ function useSpeechOutput() {
       const text = queueRef.current.shift();
       playingRef.current = true;
       const utter = new SpeechSynthesisUtterance(text);
-      if (voiceRef.current) utter.voice = voiceRef.current;
-      utter.lang = voiceRef.current?.lang || 'en-US';
+      const lang = detectLang(text, prefLangRef.current);
+      const voice = pickVoiceForLang(voicesRef.current, lang);
+      if (voice) utter.voice = voice;
+      utter.lang = voice?.lang || lang || 'en-US';
       utter.rate = 1.05;
       utter.pitch = 1.0;
       utter.volume = 1.0;
@@ -1495,6 +1712,7 @@ function useSpeechOutput() {
       return { push: () => {}, end: () => { if (!finished) { finished = true; onEnd?.(); } } };
     }
     try { window.speechSynthesis.cancel(); } catch {}
+    prefLangRef.current = getPreferredLang();
     queueRef.current = [];
     playingRef.current = false;
     endedRef.current = false;

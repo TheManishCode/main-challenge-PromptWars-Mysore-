@@ -142,6 +142,30 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - **Conversation UI:** reactive orb with a live equalizer (animates while listening and speaking), idle/listening/thinking/speaking states, prominent live interim transcript, and a subhint about talking over the AI / using headphones.
 - **Site-wide fluid motion (palette unchanged):** added a global motion layer in `globals.css` — animated section transitions (`.section-view` keyed by active section), card/stat/guest-note hover lift, button press/lift feedback, animated nav-pill active state, soft input focus glow, chat-bubble slide-in, smooth theme color transitions, and a `prefers-reduced-motion` guard that disables it all.
 
+### Slime Buddy, BYO API Key, Multilingual + Greeting Fix (2026-06-21)
+
+**Interactive slime buddy** (`src/app/components/SlimeBuddy.js`)
+- A draggable, cursor-following slime creature that roams the whole site (fixed overlay, `requestAnimationFrame` movement with jelly squash-and-stretch; pupils track the cursor).
+- Facial expressions via inline SVG: happy, curious, sleepy, love, surprised, angry, hurt, dizzy, melting. Idle moods rotate and it shows supportive speech bubbles (calming lines when burnout risk is high, else encouragements).
+- Play: drag to fling it; poke it (quick tap) → hurt → angry → after repeated hits it MELTS into a puddle, then reforms dizzy. Honors `prefers-reduced-motion`.
+- Toggleable via Settings; preference persisted in `localStorage` (`mindtrail-buddy-on`).
+
+**Bring-your-own Gemini API key** (never stored in our DB)
+- Settings popover (gear icon in topbar) with an insert box; the button shows **Insert**, switches to **Remove** once a key is saved, and back to **Insert** after removal.
+- Stored only in the browser `localStorage` (`mindtrail-gemini-key`) — survives session end, removed only by the user. Never written to the database or logged.
+- Client patches `window.fetch` once (`installApiKeyHeader`) to attach `x-mindtrail-api-key` ONLY to same-origin `/api/` requests (hardened against leaking the key to third parties).
+- Server: `resolveApiKey()` in `gemini.js` reads the header via `next/headers` and uses it transiently; falls back to `GEMINI_API_KEY`. `getModel()`/`getFastModel()` are now async; all call sites awaited; `streamCompanionReply` is async.
+- Invalid user key → the voice route now emits a clear spoken fallback telling the user to check/remove the key in Settings.
+
+**Multilingual** (Indian languages)
+- Both chat + voice system prompts now instruct the companion to detect the student's language and reply in the same language/script (English, Hindi, Hinglish, Tamil, Telugu, Bengali, Marathi, etc.), switching when they switch.
+- Speech recognition language is selectable (Settings → Conversation language; `mindtrail-lang`), defaulting to Auto (browser locale). `useSpeechInput.start({ lang })` applies it.
+- TTS picks a voice matching the reply's language — detected per sentence from the script (Devanagari/Bengali/Tamil/etc. → matching BCP-47 voice), falling back to the selected language.
+- Verified live: Hindi prompt → Hindi reply; Hinglish → Hindi reply; English → English.
+
+**Greeting fix**
+- The persona projected distress onto plain greetings ("Hi" → "It sounds like you're going through a lot"). Both prompts now MATCH THE USER'S ENERGY: a greeting/small talk gets a warm casual reply that invites sharing; empathy only appears when the student shares something real. Verified: "Hi" → "Hi there! How are you doing today?"
+
 ### Relief Room (new section)
 Four tools replacing generic breathing advice:
 - **Pressure Valve**: 60-second unfiltered writing dump → AI extracts the real underlying concern, names the emotion precisely, gives one 10-minute next step. Stateless (no DB).

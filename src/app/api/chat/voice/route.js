@@ -28,6 +28,7 @@ export async function POST(request) {
     const actor = await getActor();
     await rateLimit(`chat-voice:${actor.storageKey}`, { limit: 40, windowMs: 60 * 60 * 1000 });
 
+    const usedUserKey = Boolean(request.headers.get('x-mindtrail-api-key'));
     const { message } = parseJsonBody(chatSchema, await request.json());
 
     if (detectCrisis(message)) {
@@ -50,23 +51,30 @@ export async function POST(request) {
       content: message
     }).catch(() => {});
 
-    const result = streamCompanionReply(message, entries, history);
+    const result = await streamCompanionReply(message, entries, history);
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
         let full = '';
+        let errored = false;
         try {
           for await (const delta of result.textStream) {
             full += delta;
             controller.enqueue(encoder.encode(delta));
           }
         } catch {
-          if (!full) controller.enqueue(encoder.encode("I'm having trouble responding right now. Can you say that again?"));
+          errored = true;
+        }
+        if (!full.trim()) {
+          full = usedUserKey
+            ? "I couldn't reach the AI with the API key you added. Please double-check it in Settings, or remove it to use the default."
+            : "I'm having trouble responding right now. Could you say that again?";
+          controller.enqueue(encoder.encode(full));
         }
         controller.close();
         const reply = full.trim();
-        if (reply) {
+        if (reply && !errored) {
           await saveChatMessage(actor.storageKey, thread.id, {
             id: randomUUID(),
             role: 'companion',

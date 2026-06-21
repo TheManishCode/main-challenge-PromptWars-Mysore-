@@ -1,3 +1,4 @@
+import { headers } from 'next/headers';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { generateObject, generateText, streamText } from 'ai';
 import { randomUUID } from 'crypto';
@@ -152,20 +153,28 @@ function normalizeAnalysis(analysis, input) {
 
 /* ─── Model ──────────────────────────────────────────────────────────────── */
 
-function getModel() {
-  const google = createGoogleGenerativeAI({
-    apiKey: getRequiredEnv('GEMINI_API_KEY')
-  });
+// Resolve the Gemini key for THIS request: a user-supplied key sent via the
+// `x-mindtrail-api-key` header takes precedence, otherwise fall back to the
+// server env key. The user key is used transiently and never stored or logged.
+async function resolveApiKey() {
+  try {
+    const store = await headers();
+    const provided = store.get('x-mindtrail-api-key');
+    if (provided && provided.trim()) return provided.trim();
+  } catch {}
+  return getRequiredEnv('GEMINI_API_KEY');
+}
+
+async function getModel() {
+  const google = createGoogleGenerativeAI({ apiKey: await resolveApiKey() });
   return google(process.env.GEMINI_MODEL || 'gemini-2.5-flash');
 }
 
 // Model for the live voice conversation. Defaults to the same fast flash model
 // as the rest of the app (thinking is disabled at the call site for low latency).
 // Override with GEMINI_VOICE_MODEL if a different model is preferred.
-function getFastModel() {
-  const google = createGoogleGenerativeAI({
-    apiKey: getRequiredEnv('GEMINI_API_KEY')
-  });
+async function getFastModel() {
+  const google = createGoogleGenerativeAI({ apiKey: await resolveApiKey() });
   return google(process.env.GEMINI_VOICE_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash');
 }
 
@@ -194,7 +203,7 @@ Requirements:
 - Do not invent events, diagnoses, medical claims, or personal facts.`;
 
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: analysisSchema,
     system: buildSafetyInstruction(),
     prompt,
@@ -227,11 +236,13 @@ export async function chatWithCompanion(message, recentEntries) {
   }));
 
   const result = await generateText({
-    model: getModel(),
+    model: await getModel(),
     system: [
       buildSafetyInstruction(),
       'You are a warm, perceptive study coach for a stressed Indian student preparing for high-stakes exams (NEET, JEE, UPSC, CUET, GATE, boards). Your purpose is to talk WITH them and guide them — through understanding and good questions — to reach their own answer, not to hand them a finished plan or a list of tips.',
-      'Show real empathy first, briefly and sincerely — acknowledge how they feel in a sentence, without being theatrical or repeating the same validation.',
+      'MATCH THEIR ENERGY. If they just greet you or make small talk, reply warmly and naturally and invite them to share — do NOT assume they are struggling or project distress onto a simple hello. Only bring empathy when they actually share something heavy.',
+      'When they share something real, show empathy first, briefly and sincerely — acknowledge how they feel in a sentence, without being theatrical or repeating the same validation.',
+      'LANGUAGE: detect the language the student is writing in and ALWAYS reply in that same language and script — English, Hindi, Hinglish, Tamil, Telugu, Bengali, Marathi, or any Indian language. If they switch languages, switch with them. Never force English on them.',
       'Lead with curiosity that has a PURPOSE. Ask meaningful, specific questions that help you understand their mindset and their real blocker, and that move them one step closer to clarity — like "which exam is closest for you?" or "when you sit to study, what actually stops you — not knowing where to begin, or feeling too drained?". Never ask hollow, aimless questions like "tell me more" or "what is underneath that".',
       'Guide them to their OWN answer step by step. Do not jump straight to a finished study plan. Narrow things down with them, surface what they already half-know, and let them name the next step — then you can gently confirm or shape it.',
       'Build on what they said so they feel understood before the next question. Usually end with one thoughtful question; only give a direct suggestion once you truly understand their situation or they clearly just need reassurance.',
@@ -271,7 +282,7 @@ function buildChatContext(recentEntries) {
 
 /* ─── Live Voice Companion (streaming) ───────────────────────────────────── */
 
-export function streamCompanionReply(message, recentEntries, history = []) {
+export async function streamCompanionReply(message, recentEntries, history = []) {
   const context = buildChatContext(recentEntries.slice(0, 6));
   const transcript = history
     .slice(-6)
@@ -279,13 +290,15 @@ export function streamCompanionReply(message, recentEntries, history = []) {
     .join('\n');
 
   return streamText({
-    model: getFastModel(),
+    model: await getFastModel(),
     system: [
       buildSafetyInstruction(),
       'You are a warm, perceptive study coach for a stressed Indian student preparing for high-stakes exams (NEET, JEE, UPSC, CUET, GATE, boards). This is a LIVE SPOKEN conversation. Your purpose is to TALK WITH them and guide them — through good questions and understanding — to reach their own answer, not to hand them a finished plan.',
       'Keep replies short and natural for speech: 1 to 3 sentences. No markdown, lists, headings, or emojis — it is read aloud.',
-      'Show real, grounded empathy: acknowledge how they feel once, simply and sincerely. Never be theatrical ("oh wow, absolutely terrifying") and never repeat the same validation twice.',
-      'Lead with curiosity that has a PURPOSE. Most replies should end with ONE meaningful, specific question that deepens your understanding of their situation or mindset and moves them one concrete step closer to clarity.',
+      'MATCH THEIR ENERGY. If they just greet you ("hi", "hello") or make small talk, reply warmly and casually and invite them to share — do NOT assume they are struggling or project sadness/distress onto a simple hello. Only bring empathy when they actually share something heavy.',
+      'When they do share something real, show grounded empathy: acknowledge how they feel once, simply and sincerely. Never be theatrical ("oh wow, absolutely terrifying") and never repeat the same validation twice.',
+      'LANGUAGE: detect the language the student is speaking and ALWAYS reply in that same language and script — English, Hindi, Hinglish, Tamil, Telugu, Bengali, Marathi, or any Indian language. If they switch languages, switch with them. Never force English on them.',
+      'Lead with curiosity that has a PURPOSE. When they share a concern, end with ONE meaningful, specific question that deepens your understanding of their situation or mindset and moves them one concrete step closer to clarity.',
       'Your questions must be useful and pointed — they should help the student understand themselves and narrow things down. Ask things like "which exam is closest for you?", "when you sit down to study, what actually stops you — not knowing where to start, or feeling too drained to focus?". NEVER ask hollow, aimless questions like "tell me more" or "what is underneath that".',
       'Guide them to their OWN answer step by step. Do NOT jump straight to the final plan or a ready-made "do 25 minutes of Physics" prescription. Help them arrive at it: narrow the subject with them, surface what they already half-know, then let them name the next step (you can gently confirm or shape it).',
       'Build on what they said so they feel understood before you ask the next thing. One thoughtful question at a time, not a list.',
@@ -325,7 +338,7 @@ export async function generateFutureLetter(entries) {
   }));
 
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: futureLetterSchema,
     system: buildSafetyInstruction(),
     prompt: `Write a heartfelt letter from this student's FUTURE SELF — written as if they have already survived their board exam season and are looking back.
@@ -362,7 +375,7 @@ const pressureValveSchema = z.object({
 
 export async function processPressureValve(rawDump) {
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: pressureValveSchema,
     system: buildSafetyInstruction(),
     prompt: `A student just did a 60-second unfiltered writing dump. Read it carefully and extract the real emotional signal underneath.
@@ -393,7 +406,7 @@ const worryAnalysisSchema = z.object({
 
 export async function analyzeWorry(worryText) {
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: worryAnalysisSchema,
     system: buildSafetyInstruction(),
     prompt: `A student is trying to "park" this worry so they can focus on studying without it looping in their head.
@@ -436,7 +449,7 @@ Be gentle, observational, and kind. Do NOT diagnose emotions or mental states de
   };
 
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: imageAnalysisSchema,
     system: buildSafetyInstruction(),
     messages: [
@@ -458,7 +471,7 @@ Be gentle, observational, and kind. Do NOT diagnose emotions or mental states de
 
 export async function generateEntryInsights(entry) {
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: insightBubbleSchema,
     system: buildSafetyInstruction(),
     prompt: `Create distinct speech-bubble insights for this journal entry. Use only these categories: Mood, Pattern, Suggestion, Highlight.
@@ -514,7 +527,7 @@ export async function generateSuggestions(entries) {
   }));
 
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: suggestionsSchema,
     system: buildSafetyInstruction(),
     prompt: `Based on this student's recent wellness log data, generate personalized scheduling and study suggestions.
@@ -558,7 +571,7 @@ export async function detectHiddenTriggers(entries) {
   }));
 
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: hiddenTriggersSchema,
     system: buildSafetyInstruction(),
     prompt: `Analyze these student wellness entries to detect HIDDEN stress triggers and emotional patterns that the student may not be aware of.
@@ -614,7 +627,7 @@ export async function generateWellnessCoaching(coachData, recentEntries) {
   };
 
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: wellnessCoachingSchema,
     system: buildSafetyInstruction(),
     prompt: `Generate a personalized wellness coaching session for this student.
@@ -662,7 +675,7 @@ export async function generateWeeklyReport(entries) {
   }));
 
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: weeklyReportSchema,
     system: buildSafetyInstruction(),
     prompt: `Generate a comprehensive weekly mental health report for this student based on their journal entries from the past week.
@@ -705,7 +718,7 @@ export async function analyzeMockTest(testData, recentEntries) {
   const scorePercent = ((testData.score / testData.maxScore) * 100).toFixed(1);
 
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: mockTestAnalysisSchema,
     system: buildSafetyInstruction(),
     prompt: `Analyze this student's mock test performance and provide emotional support and strategic guidance.
@@ -751,7 +764,7 @@ export async function generateBurnoutPrediction(entries) {
   }));
 
   const result = await generateObject({
-    model: getModel(),
+    model: await getModel(),
     schema: burnoutPredictionSchema,
     system: buildSafetyInstruction(),
     prompt: `Analyze this student's wellness data over time to predict burnout risk and provide early warnings.

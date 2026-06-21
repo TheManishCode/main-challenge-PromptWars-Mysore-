@@ -1,5 +1,7 @@
 import { headers } from 'next/headers';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createOpenAI } from '@ai-sdk/openai';
+import { createAnthropic } from '@ai-sdk/anthropic';
 import { generateObject, generateText, streamText } from 'ai';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
@@ -153,29 +155,67 @@ function normalizeAnalysis(analysis, input) {
 
 /* ─── Model ──────────────────────────────────────────────────────────────── */
 
-// Resolve the Gemini key for THIS request: a user-supplied key sent via the
-// `x-mindtrail-api-key` header takes precedence, otherwise fall back to the
-// server env key. The user key is used transiently and never stored or logged.
-async function resolveApiKey() {
+// Detect the LLM provider from an API key's shape so users can bring a key from
+// any provider — not just Gemini.
+function detectProvider(key) {
+  if (!key) return null;
+  if (key.startsWith('sk-ant-')) return 'anthropic';
+  if (key.startsWith('AIza')) return 'google';
+  if (key.startsWith('sk-')) return 'openai';
+  return null;
+}
+
+const DEFAULT_MODELS = {
+  google: () => process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+  openai: () => 'gpt-4o-mini',
+  anthropic: () => 'claude-3-5-haiku-latest'
+};
+
+// Read the per-request BYO-key headers. The key/provider/model are used
+// transiently for this request only and are never stored or logged.
+async function readKeyHeaders() {
   try {
     const store = await headers();
-    const provided = store.get('x-mindtrail-api-key');
-    if (provided && provided.trim()) return provided.trim();
-  } catch {}
-  return getRequiredEnv('GEMINI_API_KEY');
+    return {
+      key: store.get('x-mindtrail-api-key')?.trim() || null,
+      provider: store.get('x-mindtrail-provider')?.trim()?.toLowerCase() || null,
+      model: store.get('x-mindtrail-model')?.trim() || null
+    };
+  } catch {
+    return { key: null, provider: null, model: null };
+  }
+}
+
+function buildModel(provider, key, model) {
+  if (provider === 'openai') {
+    return createOpenAI({ apiKey: key })(model || DEFAULT_MODELS.openai());
+  }
+  if (provider === 'anthropic') {
+    return createAnthropic({ apiKey: key })(model || DEFAULT_MODELS.anthropic());
+  }
+  return createGoogleGenerativeAI({ apiKey: key })(model || DEFAULT_MODELS.google());
+}
+
+// Resolve the model for THIS request. A user-supplied key (any provider) takes
+// precedence; otherwise fall back to the server env Gemini key.
+async function resolveModel({ fast = false } = {}) {
+  const { key, provider: hinted, model } = await readKeyHeaders();
+  if (key) {
+    const provider = hinted || detectProvider(key) || 'google';
+    return buildModel(provider, key, model);
+  }
+  const envFast = process.env.GEMINI_VOICE_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const envModel = fast ? envFast : (process.env.GEMINI_MODEL || 'gemini-2.5-flash');
+  return createGoogleGenerativeAI({ apiKey: getRequiredEnv('GEMINI_API_KEY') })(envModel);
 }
 
 async function getModel() {
-  const google = createGoogleGenerativeAI({ apiKey: await resolveApiKey() });
-  return google(process.env.GEMINI_MODEL || 'gemini-2.5-flash');
+  return resolveModel({ fast: false });
 }
 
-// Model for the live voice conversation. Defaults to the same fast flash model
-// as the rest of the app (thinking is disabled at the call site for low latency).
-// Override with GEMINI_VOICE_MODEL if a different model is preferred.
+// Model for the live voice conversation (lower-latency env default).
 async function getFastModel() {
-  const google = createGoogleGenerativeAI({ apiKey: await resolveApiKey() });
-  return google(process.env.GEMINI_VOICE_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash');
+  return resolveModel({ fast: true });
 }
 
 /* ─── Entry Analysis ─────────────────────────────────────────────────────── */

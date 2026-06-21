@@ -18,8 +18,31 @@ const SECTIONS = [
 const INITIAL_FORM = { mood: 5, energy: 5, sleepHours: 7, exam: '', journal: '' };
 
 const API_KEY_STORAGE = 'mindtrail-gemini-key';
+const PROVIDER_STORAGE = 'mindtrail-provider';
+const MODEL_STORAGE = 'mindtrail-model';
 const BUDDY_STORAGE = 'mindtrail-buddy-on';
 const LANG_STORAGE = 'mindtrail-lang';
+
+const PROVIDERS = [
+  { code: 'auto', label: 'Auto-detect from key' },
+  { code: 'google', label: 'Google Gemini', hint: 'AIza…' },
+  { code: 'openai', label: 'OpenAI (GPT)', hint: 'sk-…' },
+  { code: 'anthropic', label: 'Anthropic (Claude)', hint: 'sk-ant-…' }
+];
+
+const PROVIDER_DEFAULT_MODEL = {
+  google: 'gemini-2.5-flash',
+  openai: 'gpt-4o-mini',
+  anthropic: 'claude-3-5-haiku-latest'
+};
+
+function detectProviderFromKey(key) {
+  if (!key) return null;
+  if (key.startsWith('sk-ant-')) return 'anthropic';
+  if (key.startsWith('AIza')) return 'google';
+  if (key.startsWith('sk-')) return 'openai';
+  return null;
+}
 
 const LANGUAGES = [
   { code: 'auto', label: 'Auto-detect' },
@@ -80,6 +103,10 @@ function installApiKeyHeader() {
         if (url.origin === window.location.origin && url.pathname.startsWith('/api/')) {
           const headers = new Headers(init.headers || (typeof input !== 'string' ? input.headers : undefined));
           headers.set('x-mindtrail-api-key', key);
+          const provider = localStorage.getItem(PROVIDER_STORAGE);
+          const model = localStorage.getItem(MODEL_STORAGE);
+          if (provider && provider !== 'auto') headers.set('x-mindtrail-provider', provider);
+          if (model) headers.set('x-mindtrail-model', model);
           return original(input, { ...init, headers });
         }
       }
@@ -1314,7 +1341,10 @@ function AuthScreen({ clerkEnabled, onTesterReady }) {
 function SettingsMenu({ buddyOn, onToggleBuddy }) {
   const [open, setOpen] = useState(false);
   const [savedKey, setSavedKey] = useState(() => { try { return localStorage.getItem(API_KEY_STORAGE) || ''; } catch { return ''; } });
+  const [savedProvider, setSavedProvider] = useState(() => { try { return localStorage.getItem(PROVIDER_STORAGE) || 'auto'; } catch { return 'auto'; } });
   const [draft, setDraft] = useState('');
+  const [providerSel, setProviderSel] = useState('auto');
+  const [modelDraft, setModelDraft] = useState('');
   const [note, setNote] = useState('');
   const [lang, setLang] = useState(() => { try { return localStorage.getItem(LANG_STORAGE) || 'auto'; } catch { return 'auto'; } });
   const ref = useRef(null);
@@ -1331,23 +1361,43 @@ function SettingsMenu({ buddyOn, onToggleBuddy }) {
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
 
+  const effectiveProvider = providerSel === 'auto' ? detectProviderFromKey(draft.trim()) : providerSel;
+
   function saveKey() {
     const value = draft.trim();
-    if (value.length < 20) { setNote('That key looks too short.'); return; }
-    try { localStorage.setItem(API_KEY_STORAGE, value); } catch {}
+    if (value.length < 16) { setNote('That key looks too short.'); return; }
+    const provider = providerSel === 'auto' ? (detectProviderFromKey(value) || 'auto') : providerSel;
+    if (provider === 'auto') { setNote("Couldn't detect the provider — please pick one below."); return; }
+    try {
+      localStorage.setItem(API_KEY_STORAGE, value);
+      localStorage.setItem(PROVIDER_STORAGE, provider);
+      if (modelDraft.trim()) localStorage.setItem(MODEL_STORAGE, modelDraft.trim());
+      else localStorage.removeItem(MODEL_STORAGE);
+    } catch {}
     setSavedKey(value);
+    setSavedProvider(provider);
     setDraft('');
-    setNote('Saved on this device. It will be used for all AI features.');
+    setModelDraft('');
+    const name = PROVIDERS.find((p) => p.code === provider)?.label || provider;
+    setNote(`Saved on this device. Using ${name} for all AI features.`);
   }
 
   function removeKey() {
-    try { localStorage.removeItem(API_KEY_STORAGE); } catch {}
+    try {
+      localStorage.removeItem(API_KEY_STORAGE);
+      localStorage.removeItem(PROVIDER_STORAGE);
+      localStorage.removeItem(MODEL_STORAGE);
+    } catch {}
     setSavedKey('');
+    setSavedProvider('auto');
     setDraft('');
+    setModelDraft('');
+    setProviderSel('auto');
     setNote('Removed. Falling back to the app default key.');
   }
 
   const masked = savedKey ? `${savedKey.slice(0, 4)}••••••••${savedKey.slice(-4)}` : '';
+  const savedProviderLabel = PROVIDERS.find((p) => p.code === savedProvider)?.label || savedProvider;
 
   return (
     <div className="settings-menu" ref={ref}>
@@ -1363,29 +1413,48 @@ function SettingsMenu({ buddyOn, onToggleBuddy }) {
       {open && (
         <div className="settings-popover" role="dialog" aria-label="Settings">
           <div className="settings-block">
-            <p className="settings-title">Your Gemini API key</p>
-            <p className="settings-sub">Use your own key for all AI features. Stored only in this browser — never sent to or saved in our database. It stays until you remove it.</p>
+            <p className="settings-title">Your own API key</p>
+            <p className="settings-sub">Bring a key from any provider — Gemini, OpenAI (GPT), or Anthropic (Claude). The provider is auto-detected from the key. Stored only in this browser, never in our database, and used until you remove it.</p>
             {savedKey ? (
-              <div className="key-row">
-                <code className="key-masked">{masked}</code>
-                <button type="button" className="key-btn key-btn-remove" onClick={removeKey}>Remove</button>
-              </div>
+              <>
+                <div className="key-row">
+                  <code className="key-masked">{masked}</code>
+                  <button type="button" className="key-btn key-btn-remove" onClick={removeKey}>Remove</button>
+                </div>
+                <p className="settings-note">Active provider: {savedProviderLabel}</p>
+              </>
             ) : (
-              <div className="key-row">
-                <input
-                  className="input key-input"
-                  type="password"
-                  value={draft}
-                  onChange={(e) => { setDraft(e.target.value); setNote(''); }}
-                  placeholder="AIza…"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <button type="button" className="key-btn key-btn-insert" onClick={saveKey} disabled={!draft.trim()}>Insert</button>
-              </div>
+              <>
+                <div className="key-row">
+                  <input
+                    className="input key-input"
+                    type="password"
+                    value={draft}
+                    onChange={(e) => { setDraft(e.target.value); setNote(''); }}
+                    placeholder="Paste any LLM API key…"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button type="button" className="key-btn key-btn-insert" onClick={saveKey} disabled={!draft.trim()}>Insert</button>
+                </div>
+                <div className="key-grid">
+                  <select className="input key-select" value={providerSel} onChange={(e) => setProviderSel(e.target.value)} aria-label="Provider">
+                    {PROVIDERS.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
+                  </select>
+                  <input
+                    className="input key-model"
+                    value={modelDraft}
+                    onChange={(e) => setModelDraft(e.target.value)}
+                    placeholder={effectiveProvider ? `model (default: ${PROVIDER_DEFAULT_MODEL[effectiveProvider]})` : 'model (optional)'}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+                {effectiveProvider && <p className="settings-note">Detected: {PROVIDERS.find((p) => p.code === effectiveProvider)?.label}</p>}
+              </>
             )}
             {note && <p className="settings-note">{note}</p>}
-            <a className="settings-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Get a free key →</a>
+            <a className="settings-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Get a free Gemini key →</a>
           </div>
 
           <div className="settings-divider" />
@@ -1499,6 +1568,7 @@ function useSpeechInput() {
   const recRef = useRef(null);
   const keepAliveRef = useRef(false);
   const langRef = useRef('en-US');
+  const netRetryRef = useRef(0);
   const callbacksRef = useRef({ onResult: null, onEnd: null, continuous: true });
 
   useEffect(() => {
@@ -1523,6 +1593,7 @@ function useSpeechInput() {
         if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
         else interimText += e.results[i][0].transcript;
       }
+      if (interimText.trim() || finalText.trim()) netRetryRef.current = 0;
       setInterim(interimText);
       if (interimText.trim()) callbacksRef.current.onInterim?.(interimText.trim());
       if (finalText.trim()) {
@@ -1549,6 +1620,12 @@ function useSpeechInput() {
     rec.onerror = (e) => {
       setInterim('');
       if (e.error === 'aborted' || e.error === 'no-speech') return;
+      // 'network' from the browser speech service is often a transient blip —
+      // let keep-alive silently restart a few times before surfacing anything.
+      if (e.error === 'network' && callbacksRef.current.continuous && netRetryRef.current < 4) {
+        netRetryRef.current += 1;
+        return;
+      }
       keepAliveRef.current = false;
       setListening(false);
       const isEdge = navigator.userAgent.includes('Edg/');
@@ -1556,9 +1633,9 @@ function useSpeechInput() {
         'not-allowed': 'Microphone access was blocked. Click the lock/mic icon in your address bar → allow Microphone, then reload.',
         'service-not-allowed': isEdge
           ? 'Edge speech service unavailable. Turn ON Windows Settings → Privacy & security → Speech → "Online speech recognition", then reload.'
-          : 'Speech recognition is unavailable in this context. Use Chrome or Edge over https:// or localhost.',
+          : 'Speech recognition is unavailable here. Try Chrome or Edge over https:// or localhost.',
         'audio-capture': 'No microphone detected. Please connect one.',
-        'network': 'Voice needs an internet connection (speech audio is processed by the browser).',
+        'network': 'The browser’s speech service keeps dropping. You can still type to chat, or tap to try voice again.',
       };
       setVoiceError(map[e.error] || `Voice error: ${e.error}`);
     };
@@ -1572,6 +1649,7 @@ function useSpeechInput() {
       return;
     }
     langRef.current = lang || getPreferredLang();
+    netRetryRef.current = 0;
     keepAliveRef.current = false;
     const prev = recRef.current;
     if (prev) {

@@ -142,6 +142,14 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - **Conversation UI:** reactive orb with a live equalizer (animates while listening and speaking), idle/listening/thinking/speaking states, prominent live interim transcript, and a subhint about talking over the AI / using headphones.
 - **Site-wide fluid motion (palette unchanged):** added a global motion layer in `globals.css` — animated section transitions (`.section-view` keyed by active section), card/stat/guest-note hover lift, button press/lift feedback, animated nav-pill active state, soft input focus glow, chat-bubble slide-in, smooth theme color transitions, and a `prefers-reduced-motion` guard that disables it all.
 
+### Multi-Provider BYO Keys + Conversation Robustness (2026-06-21)
+- **Any LLM provider, not just Gemini.** `resolveModel()` in `gemini.js` detects the provider from the user's key shape (`AIza…` → Google, `sk-ant-…` → Anthropic, `sk-…` → OpenAI) and builds the matching AI-SDK model (`@ai-sdk/google` / `@ai-sdk/openai` / `@ai-sdk/anthropic`). Per-provider default models: Gemini `gemini-2.5-flash`, OpenAI `gpt-4o-mini`, Anthropic `claude-3-5-haiku-latest`; the user may override the model. Falls back to the env Gemini key when no user key is set. Works uniformly for `generateText`, `generateObject`, and `streamText` (the google-only `thinkingConfig` providerOption is ignored by other providers).
+- **Headers:** client sends `x-mindtrail-api-key` plus optional `x-mindtrail-provider` and `x-mindtrail-model`, attached only to same-origin `/api/` requests. Read transiently via `next/headers`; never stored or logged.
+- **Settings UI:** the key panel now accepts a key from any provider with an Insert↔Remove toggle, an auto-detect provider dropdown, an optional model field, and shows the detected/active provider. Stored only in `localStorage` (`mindtrail-gemini-key`, `mindtrail-provider`, `mindtrail-model`).
+- **Why:** the shared env Gemini key can hit free-tier quota (caused the "no response / totally broken" reports); users can now plug in their own working key from any provider.
+- **Conversation robustness:** the browser SpeechRecognition `network` error (which can fire even with working internet) now auto-retries up to 4 times via keep-alive before surfacing a calmer, accurate message ("the browser's speech service keeps dropping — you can still type, or tap to try again") instead of the misleading "needs internet." The voice route already emits a clear spoken fallback when a stream returns empty (bad key / quota).
+- Verified live: env-Gemini path replies normally; OpenAI- and Anthropic-shaped keys route to the right provider and fail gracefully with the in-voice fallback.
+
 ### Slime Buddy, BYO API Key, Multilingual + Greeting Fix (2026-06-21)
 
 **Interactive slime buddy** (`src/app/components/SlimeBuddy.js`)

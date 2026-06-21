@@ -105,6 +105,16 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - Hardened `start()`: detaches the previous recognizer's handlers and disables keep-alive before `abort()`, removing a race where a stale `onend` could auto-restart a discarded recognizer.
 - Generalized `not-allowed`/`service-not-allowed` error messages (no longer blame Edge by default).
 
+### Live Conversation Mode (2026-06-21)
+- **Goal:** Hands-free, low-latency spoken conversation with the companion — like ChatGPT/Gemini voice — instead of one-shot dictation.
+- **Launch:** "Conversation" button in the Chat section header (shown only when both `SpeechRecognition` and `speechSynthesis` are supported) opens a full-screen overlay with an animated status orb.
+- **Turn loop (`ConversationMode`):** auto state machine `listening → thinking → speaking → listening`. Recognition runs single-shot per turn; on a final result it streams to the AI; the mic stays off while the AI speaks (no self-hearing); listening auto-resumes when speech ends.
+- **Low latency via streaming:** new `POST /api/chat/voice` streams the reply token-by-token (`streamText` + `ReadableStream`). The client buffers incoming text into complete sentences (`takeSentence`) and feeds each sentence to TTS as soon as it is ready, so the companion starts talking ~1s in instead of waiting for the full reply.
+- **Streaming TTS (`useSpeechOutput`):** queue-based `beginStream({ onEnd }).push(sentence)/end()` sink; picks a natural English voice (`pickVoice`), speaks sentence chunks back-to-back, and fires `onEnd` only after the stream ends and the queue drains. `pump` lives in a ref to satisfy the React Compiler immutability/refs lint rules.
+- **Voice persona:** `streamCompanionReply()` uses a spoken-conversation system prompt — warm, validating, engaging, 1–3 sentences, offers ONE concrete small step when the student is stuck or asks, usually ends with a caring question, no markdown/lists (it is read aloud). Includes the last 8 chat turns for continuity plus recent journal context. `maxOutputTokens: 220` for snappy replies.
+- **Controls:** tap orb to interrupt the AI (barge-in) and start speaking; Mute pauses listening; End closes. Crisis language is still detected server-side and the KIRAN helpline message is streamed/spoken.
+- **Persistence:** the voice endpoint stores both student and companion messages in the same `chat_threads`/`chat_messages` thread as text chat; the overlay also appends turns to the shared in-memory `chatLog` so the text Chat tab stays in sync.
+
 ### Relief Room (new section)
 Four tools replacing generic breathing advice:
 - **Pressure Valve**: 60-second unfiltered writing dump → AI extracts the real underlying concern, names the emotion precisely, gives one 10-minute next step. Stateless (no DB).
@@ -129,6 +139,7 @@ Four tools replacing generic breathing advice:
 - `GET/POST/PATCH /api/worry` — Worry parking lot
 - `POST /api/future-letter` — Letter from future self
 - `POST /api/pressure-valve` — Pressure valve clarity
+- `POST /api/chat/voice` — streaming companion reply for live conversation mode (text/plain stream, auth-protected, persists both turns)
 
 ### New DB Table
 - `worry_items`: id, user_key, worry_text, acknowledgment, is_in_their_control, what_they_can_control, park_until, park_message, resolved, created_at
@@ -141,20 +152,19 @@ Four tools replacing generic breathing advice:
 
 ## Verification Logs
 
-- Last Run Verification: 2026-06-21 (voice mode root-cause fix)
-- Status: Passed lint, test, and build. Corrected `Permissions-Policy` header verified live.
+- Last Run Verification: 2026-06-21 (live conversation mode + streaming voice)
+- Status: Passed lint, test, and build. New streaming voice endpoint verified live (200 home, 401 unauthenticated on `/api/chat/voice`).
 - Commands:
   - `npm run lint`
-  - `npm.cmd run test`
-  - `npm.cmd run build`
-  - `curl -sI http://localhost:3001/` (header check)
+  - `npm run test`
+  - `npm run build`
+  - `Invoke-WebRequest http://localhost:3000/` and `POST /api/chat/voice` (auth gate check)
 - Results:
-  - ESLint passed.
+  - ESLint passed (including React Compiler `react-hooks/refs`, `set-state-in-effect`, and `immutability` rules — `pump` moved to a ref, loop closures assigned in an effect, displayed phase derived instead of set in effects).
   - Vitest passed: 6 test files, 44 tests.
-  - `next build` passed.
-  - Dev server returns HTTP 200 and renders `<title>MindTrail | PromptWars</title>`.
-  - `Permissions-Policy: camera=(self), microphone=(self), geolocation=()` confirmed served — microphone is now permitted for the origin in all browsers.
-  - Note: live speech-to-text needs a real microphone, a user-granted browser permission prompt, and spoken audio, so it cannot be exercised end-to-end by the automated preview harness; the previously failing header gate that blocked it in all browsers is fixed and verified.
+  - `next build` passed; `/api/chat/voice` registered as a dynamic route.
+  - Dev server returns HTTP 200 and renders the MindTrail home; `POST /api/chat/voice` returns 401 unauthenticated, confirming the route loads, validates, and enforces `getActor()` auth + same-origin protection.
+  - Note: the full hands-free loop (live mic capture, `SpeechRecognition`, and `speechSynthesis` playback) needs a real microphone, a user-granted permission prompt, and spoken audio, so it cannot be exercised end-to-end by the automated preview harness. The streaming pipeline is verified up to the auth boundary and the client wiring builds/lints clean.
 
 ## Major Rebuild (2026-06-20)
 

@@ -1,5 +1,5 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { generateObject, generateText } from 'ai';
+import { generateObject, generateText, streamText } from 'ai';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { getRequiredEnv } from './env';
@@ -243,6 +243,55 @@ Respond with empathy and curiosity. Reflect what you heard, sit with any pain th
   });
 
   return result.text;
+}
+
+function buildChatContext(recentEntries) {
+  return recentEntries.map((entry) => ({
+    createdAt: entry.createdAt,
+    exam: entry.exam,
+    mood: entry.mood,
+    energy: entry.energy,
+    sleepHours: entry.sleepHours,
+    stress: entry.stress,
+    anxiety: entry.anxiety,
+    confidence: entry.confidence,
+    studyHours: entry.studyHours,
+    journal: entry.journal,
+    analysis: entry.analysis
+  }));
+}
+
+/* ─── Live Voice Companion (streaming) ───────────────────────────────────── */
+
+export function streamCompanionReply(message, recentEntries, history = []) {
+  const context = buildChatContext(recentEntries);
+  const transcript = history
+    .slice(-8)
+    .map((m) => `${m.role === 'student' ? 'Student' : 'You'}: ${m.content}`)
+    .join('\n');
+
+  return streamText({
+    model: getModel(),
+    system: [
+      buildSafetyInstruction(),
+      'You are a warm, supportive voice companion talking with a stressed exam student. This is a LIVE SPOKEN conversation, so sound like a caring friend, not a chatbot.',
+      'Keep every reply SHORT: 1 to 3 spoken sentences. Never write paragraphs, headings, bullet points, emojis, or markdown — it will be read aloud.',
+      'Lead with genuine empathy. Acknowledge and validate exactly what they feel before anything else ("that sounds exhausting", "no wonder you feel that way").',
+      'Be engaging and conversational — react naturally, show you are really listening, and reflect back the heart of what they said.',
+      'When they are stuck, overwhelmed, or ask for help, offer ONE small, concrete, doable next step — gently, in plain spoken words, never a list.',
+      'Usually end with one short, caring question to keep the conversation flowing — unless they clearly just need to be heard right now.',
+      'Never lecture, never moralize, never sound clinical. Stay grounded only in what the student actually shared.'
+    ].join('\n'),
+    prompt: `${transcript ? `Conversation so far:\n${transcript}\n\n` : ''}The student's recent journal context (use only if relevant, do not invent anything):
+${JSON.stringify(context).slice(0, 6000)}
+
+Student just said (spoken aloud):
+${message}
+
+Reply out loud now — warm, brief, validating, and engaging. Keep it to 1-3 natural sentences.`,
+    temperature: 0.65,
+    maxOutputTokens: 220
+  });
 }
 
 /* ─── Future Letter ──────────────────────────────────────────────────────── */

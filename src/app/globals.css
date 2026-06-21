@@ -1373,6 +1373,278 @@ input[type="range"] {
   40% { transform: translateY(-6px); opacity: 1; }
 }
 
+/* ─── Conversation launch button ─────────────────────────────────────────── */
+
+.chat-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.live-launch {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--brand);
+  background: linear-gradient(135deg, var(--brand), var(--brand-dark));
+  color: #fffdf8;
+  font-weight: 600;
+  font-size: 0.9rem;
+  box-shadow: 0 8px 22px rgba(47, 111, 115, 0.28);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.live-launch:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(47, 111, 115, 0.34);
+}
+
+.live-launch svg { display: block; }
+
+/* ─── Conversation Mode overlay ──────────────────────────────────────────── */
+
+.convo-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  gap: 10px;
+  padding: 22px clamp(16px, 5vw, 60px) 32px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(47, 111, 115, 0.22), transparent 60%),
+    radial-gradient(90% 70% at 50% 100%, rgba(228, 93, 79, 0.14), transparent 55%),
+    color-mix(in srgb, var(--bg) 88%, #000 12%);
+  backdrop-filter: blur(8px);
+  animation: convo-fade 240ms ease;
+}
+
+@keyframes convo-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.convo-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.convo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.convo-live-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(228, 93, 79, 0.6);
+  animation: convo-pulse 1.8s ease-out infinite;
+}
+
+@keyframes convo-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(228, 93, 79, 0.55); }
+  100% { box-shadow: 0 0 0 12px rgba(228, 93, 79, 0); }
+}
+
+.convo-close {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 7px 16px;
+  font-weight: 600;
+}
+
+.convo-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+}
+
+.convo-orb {
+  position: relative;
+  width: clamp(170px, 34vw, 240px);
+  height: clamp(170px, 34vw, 240px);
+  border: none;
+  background: transparent;
+  display: grid;
+  place-items: center;
+}
+
+.convo-orb-core {
+  position: absolute;
+  inset: 28%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 30%, #eafcfa, var(--brand) 55%, var(--brand-dark));
+  box-shadow: 0 0 60px rgba(47, 111, 115, 0.5), inset 0 0 24px rgba(255, 255, 255, 0.4);
+  transition: background 400ms ease, transform 400ms ease;
+}
+
+.convo-orb-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--brand) 60%, transparent);
+  opacity: 0;
+}
+
+/* Listening — calm expanding rings */
+.convo-orb[data-phase='listening'] .convo-orb-core { animation: orb-breathe 2.6s ease-in-out infinite; }
+.convo-orb[data-phase='listening'] .convo-orb-ring-1 { animation: orb-radiate 2.4s ease-out infinite; }
+.convo-orb[data-phase='listening'] .convo-orb-ring-2 { animation: orb-radiate 2.4s ease-out 0.8s infinite; }
+.convo-orb[data-phase='listening'] .convo-orb-ring-3 { animation: orb-radiate 2.4s ease-out 1.6s infinite; }
+
+/* Thinking — amber swirl, faster breathe */
+.convo-orb[data-phase='thinking'] .convo-orb-core {
+  background: radial-gradient(circle at 32% 30%, #fff3d8, var(--gold) 55%, #b07d18);
+  animation: orb-spin 1.4s linear infinite;
+}
+
+/* Speaking — green, lively pulse */
+.convo-orb[data-phase='speaking'] .convo-orb-core {
+  background: radial-gradient(circle at 32% 30%, #e7f8ec, var(--green) 55%, #2f6b45);
+  animation: orb-talk 0.7s ease-in-out infinite;
+}
+.convo-orb[data-phase='speaking'] .convo-orb-ring-1 { border-color: color-mix(in srgb, var(--green) 60%, transparent); animation: orb-radiate 1.2s ease-out infinite; }
+.convo-orb[data-phase='speaking'] .convo-orb-ring-2 { border-color: color-mix(in srgb, var(--green) 60%, transparent); animation: orb-radiate 1.2s ease-out 0.4s infinite; }
+
+/* Paused / error — dim, still */
+.convo-orb[data-phase='paused'] .convo-orb-core,
+.convo-orb[data-phase='error'] .convo-orb-core,
+.convo-orb[data-phase='unsupported'] .convo-orb-core {
+  background: radial-gradient(circle at 32% 30%, #f0ece5, var(--soft) 55%, var(--line));
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.12);
+}
+
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+
+@keyframes orb-talk {
+  0%, 100% { transform: scale(1); }
+  25% { transform: scale(1.12); }
+  60% { transform: scale(0.96); }
+}
+
+@keyframes orb-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes orb-radiate {
+  0% { opacity: 0.55; transform: scale(0.6); }
+  100% { opacity: 0; transform: scale(1.15); }
+}
+
+.convo-caption {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: center;
+}
+
+.convo-interim {
+  margin: -6px 0 0;
+  max-width: 60ch;
+  text-align: center;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.convo-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  max-height: 24vh;
+  padding: 4px;
+  width: min(640px, 100%);
+  margin: 0 auto;
+}
+
+.convo-line {
+  max-width: 86%;
+  padding: 9px 13px;
+  border-radius: 14px;
+  font-size: 0.92rem;
+  white-space: pre-wrap;
+  border: 1px solid var(--line);
+}
+
+.convo-line.student {
+  align-self: flex-end;
+  background: var(--brand-dark);
+  color: #fffdf8;
+  border-color: transparent;
+}
+
+.convo-line.companion {
+  align-self: flex-start;
+  background: var(--panel);
+}
+
+.convo-line-live {
+  border-color: var(--green);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 35%, transparent);
+}
+
+.convo-controls {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+}
+
+.convo-ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 600;
+  transition: transform 140ms ease, background 160ms ease;
+}
+
+.convo-ctrl:hover:not(:disabled) { transform: translateY(-1px); }
+
+.convo-ctrl-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fffdf8;
+}
+
+.convo-ctrl-end {
+  background: transparent;
+}
+
+.convo-ctrl-end:hover {
+  background: var(--soft);
+}
+
+@media (max-width: 620px) {
+  .chat-heading { flex-direction: column; }
+  .convo-feed { max-height: 20vh; }
+}
+
 /* ─── Graph legend new colors ────────────────────────────────────────────── */
 
 .legend-entry-low { background: #e45d4f; }

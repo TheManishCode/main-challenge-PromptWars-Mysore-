@@ -161,7 +161,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
 
   async function dispatchChat(text) {
     const outgoing = text.trim();
-    if (!outgoing) return;
+    if (!outgoing) return null;
     setChatText('');
     setChatLog((c) => [...c, { role: 'student', content: outgoing }]);
     setLoading('chat');
@@ -171,8 +171,10 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unable to reach the companion');
       setChatLog(data.messages?.length ? data.messages : (c) => [...c, { role: 'companion', content: data.reply }]);
+      return data.reply || null;
     } catch (err) {
       setError(err.message);
+      return null;
     } finally {
       setLoading('');
     }
@@ -182,6 +184,10 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
     event.preventDefault();
     dispatchChat(chatText);
   }
+
+  const appendChatMessage = useCallback((message) => {
+    setChatLog((c) => [...c, message]);
+  }, []);
 
   async function submitGuestbook(event) {
     event.preventDefault();
@@ -298,6 +304,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
           onText={setChatText}
           onSubmit={sendChat}
           onSendText={dispatchChat}
+          onAppendMessage={appendChatMessage}
         />
       )}
       {section === 'scan' && <ScanSection />}
@@ -1376,6 +1383,126 @@ function useSpeechInput() {
   return { listening, interim, voiceError, start, stop, supported };
 }
 
+/* ─── Speech Output Hook (text-to-speech) ─────────────────────────────────── */
+
+const PREFERRED_VOICES = [
+  'Google US English',
+  'Microsoft Aria',
+  'Microsoft Jenny',
+  'Microsoft Michelle',
+  'Samantha',
+  'Google UK English Female'
+];
+
+function pickVoice(voices) {
+  if (!voices.length) return null;
+  const byName = voices.find((v) => PREFERRED_VOICES.some((n) => v.name.includes(n)));
+  return (
+    byName ||
+    voices.find((v) => v.lang === 'en-US' && /female|aria|jenny|samantha|zira/i.test(v.name)) ||
+    voices.find((v) => v.lang === 'en-US') ||
+    voices.find((v) => v.lang?.startsWith('en')) ||
+    voices[0]
+  );
+}
+
+function takeSentence(buffer) {
+  const match = buffer.match(/[.!?…\n]+(\s|$)/);
+  if (!match) return null;
+  const end = match.index + match[0].length;
+  return { sentence: buffer.slice(0, end).trim(), rest: buffer.slice(end) };
+}
+
+function useSpeechOutput() {
+  const [speaking, setSpeaking] = useState(false);
+  const voiceRef = useRef(null);
+  const queueRef = useRef([]);
+  const playingRef = useRef(false);
+  const endedRef = useRef(true);
+  const doneRef = useRef(null);
+
+  const supported = useSyncExternalStore(
+    noopSubscribe,
+    () => Boolean(window.speechSynthesis && window.SpeechSynthesisUtterance),
+    () => false
+  );
+
+  useEffect(() => {
+    if (!supported) return undefined;
+    const choose = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length) voiceRef.current = pickVoice(voices);
+    };
+    choose();
+    window.speechSynthesis.addEventListener('voiceschanged', choose);
+    return () => {
+      window.speechSynthesis.removeEventListener('voiceschanged', choose);
+      try { window.speechSynthesis.cancel(); } catch {}
+    };
+  }, [supported]);
+
+  const pumpRef = useRef(() => {});
+  useEffect(() => {
+    pumpRef.current = () => {
+      if (playingRef.current) return;
+      if (queueRef.current.length === 0) {
+        if (endedRef.current) {
+          setSpeaking(false);
+          const cb = doneRef.current;
+          doneRef.current = null;
+          cb?.();
+        }
+        return;
+      }
+      const text = queueRef.current.shift();
+      playingRef.current = true;
+      const utter = new SpeechSynthesisUtterance(text);
+      if (voiceRef.current) utter.voice = voiceRef.current;
+      utter.lang = voiceRef.current?.lang || 'en-US';
+      utter.rate = 1.05;
+      utter.pitch = 1.0;
+      utter.volume = 1.0;
+      utter.onend = () => { playingRef.current = false; pumpRef.current(); };
+      utter.onerror = () => { playingRef.current = false; pumpRef.current(); };
+      try { window.speechSynthesis.speak(utter); } catch { playingRef.current = false; pumpRef.current(); }
+    };
+  });
+
+  const cancel = useCallback(() => {
+    queueRef.current = [];
+    playingRef.current = false;
+    endedRef.current = true;
+    doneRef.current = null;
+    if (supported) { try { window.speechSynthesis.cancel(); } catch {} }
+    setSpeaking(false);
+  }, [supported]);
+
+  // Streaming sink: push sentences as they arrive, call end() when the source is done.
+  const beginStream = useCallback(({ onEnd } = {}) => {
+    if (!supported) {
+      let finished = false;
+      return { push: () => {}, end: () => { if (!finished) { finished = true; onEnd?.(); } } };
+    }
+    try { window.speechSynthesis.cancel(); } catch {}
+    queueRef.current = [];
+    playingRef.current = false;
+    endedRef.current = false;
+    doneRef.current = onEnd || null;
+    setSpeaking(true);
+    return {
+      push: (sentence) => {
+        const value = (sentence || '').trim();
+        if (!value) return;
+        queueRef.current.push(value);
+        pumpRef.current();
+      },
+      end: () => { endedRef.current = true; pumpRef.current(); }
+    };
+  }, [supported]);
+
+  return { supported, speaking, beginStream, cancel };
+}
+
 /* ─── Journal Section ─────────────────────────────────────────────────────── */
 
 function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }) {
@@ -1510,9 +1637,11 @@ function StopIcon() {
   );
 }
 
-function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit, onSendText }) {
+function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit, onSendText, onAppendMessage }) {
   const speech = useSpeechInput();
+  const tts = useSpeechOutput();
   const resultRef = useRef('');
+  const [convoOpen, setConvoOpen] = useState(false);
 
   function handleVoiceToggle() {
     if (speech.listening) { speech.stop(); return; }
@@ -1529,14 +1658,31 @@ function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit,
   }
 
   const displayValue = speech.interim || chatText;
+  const liveSupported = speech.supported && tts.supported;
 
   return (
     <section className="chat-panel">
-      <div className="section-heading">
-        <p className="eyebrow">Companion</p>
-        <h2>Talk it through</h2>
-        <p className="section-subtext muted">Asks questions, listens, and tries to understand you — not lecture you. Type or speak.</p>
+      <div className="section-heading chat-heading">
+        <div>
+          <p className="eyebrow">Companion</p>
+          <h2>Talk it through</h2>
+          <p className="section-subtext muted">Asks questions, listens, and tries to understand you — not lecture you. Type, speak, or go hands-free.</p>
+        </div>
+        {liveSupported && (
+          <button type="button" className="live-launch" onClick={() => setConvoOpen(true)}>
+            <SoundWaveIcon />
+            <span>Conversation</span>
+          </button>
+        )}
       </div>
+
+      {convoOpen && (
+        <ConversationMode
+          chatLog={chatLog}
+          onAppendMessage={onAppendMessage}
+          onClose={() => setConvoOpen(false)}
+        />
+      )}
 
       <div className="chat-feed">
         {!chatLog.length && (
@@ -1579,6 +1725,240 @@ function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit,
         <button className="primary-button" type="submit" disabled={loading || speech.listening}>Send</button>
       </form>
     </section>
+  );
+}
+
+function SoundWaveIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+      <line x1="4" y1="10" x2="4" y2="14" />
+      <line x1="8" y1="7" x2="8" y2="17" />
+      <line x1="12" y1="4" x2="12" y2="20" />
+      <line x1="16" y1="7" x2="16" y2="17" />
+      <line x1="20" y1="10" x2="20" y2="14" />
+    </svg>
+  );
+}
+
+/* ─── Conversation Mode (hands-free voice) ────────────────────────────────── */
+
+const CONVO_CAPTIONS = {
+  connecting: 'Getting ready…',
+  listening: 'Listening — just talk',
+  thinking: 'Thinking about what you said…',
+  speaking: 'Speaking',
+  paused: 'Paused — tap the mic to resume',
+  error: 'Microphone needs permission',
+  unsupported: 'Voice conversation is not supported here'
+};
+
+function ConversationMode({ chatLog, onAppendMessage, onClose }) {
+  const speech = useSpeechInput();
+  const tts = useSpeechOutput();
+  const [phase, setPhase] = useState('connecting');
+  const [muted, setMuted] = useState(false);
+  const [liveReply, setLiveReply] = useState('');
+
+  const activeRef = useRef(true);
+  const mutedRef = useRef(false);
+  const phaseRef = useRef('connecting');
+  const capturedRef = useRef('');
+  const fns = useRef({});
+  const feedRef = useRef(null);
+
+  const setPh = useCallback((p) => { phaseRef.current = p; setPhase(p); }, []);
+
+  // Keep the turn-loop closures fresh each render without writing refs during render.
+  useEffect(() => {
+    fns.current.listen = () => {
+      if (!activeRef.current || mutedRef.current) { setPh('paused'); return; }
+      capturedRef.current = '';
+      setPh('listening');
+      speech.start({
+        continuous: false,
+        onResult: (text) => { capturedRef.current = text; },
+        onEnd: () => {
+          if (!activeRef.current) return;
+          const said = capturedRef.current.trim();
+          capturedRef.current = '';
+          if (said) fns.current.process(said);
+          else if (!mutedRef.current) setTimeout(() => { if (activeRef.current && !mutedRef.current) fns.current.listen(); }, 150);
+          else setPh('paused');
+        }
+      });
+    };
+
+    fns.current.process = async (text) => {
+      onAppendMessage({ role: 'student', content: text });
+      setPh('thinking');
+      setLiveReply('');
+      let speaker = null;
+      let acc = '';
+      let buffer = '';
+      const ensureSpeaker = () => {
+        if (!speaker) {
+          setPh('speaking');
+          speaker = tts.beginStream({ onEnd: () => { if (activeRef.current) fns.current.listen(); } });
+        }
+        return speaker;
+      };
+      try {
+        const res = await fetch('/api/chat/voice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+        if (!res.ok || !res.body) throw new Error('stream-failed');
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          if (!chunk) continue;
+          acc += chunk;
+          buffer += chunk;
+          if (activeRef.current) setLiveReply(acc);
+          let next;
+          while ((next = takeSentence(buffer))) {
+            if (next.sentence) ensureSpeaker().push(next.sentence);
+            buffer = next.rest;
+          }
+        }
+        if (buffer.trim()) ensureSpeaker().push(buffer.trim());
+        const finalReply = acc.trim();
+        setLiveReply('');
+        if (finalReply) onAppendMessage({ role: 'companion', content: finalReply });
+        if (!activeRef.current) { tts.cancel(); return; }
+        if (speaker) speaker.end();
+        else fns.current.listen();
+      } catch {
+        setLiveReply('');
+        tts.cancel();
+        if (activeRef.current) fns.current.listen();
+      }
+    };
+  });
+
+  useEffect(() => {
+    activeRef.current = true;
+    if (!speech.supported || !tts.supported) return undefined;
+    const id = setTimeout(() => fns.current.listen?.(), 250);
+    return () => {
+      activeRef.current = false;
+      clearTimeout(id);
+      try { speech.stop(); } catch {}
+      tts.cancel();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' });
+  }, [chatLog, phase, liveReply]);
+
+  function toggleMute() {
+    setMuted((prev) => {
+      const next = !prev;
+      mutedRef.current = next;
+      if (next) {
+        try { speech.stop(); } catch {}
+        setPh('paused');
+      } else if (phaseRef.current !== 'speaking' && phaseRef.current !== 'thinking') {
+        fns.current.listen();
+      }
+      return next;
+    });
+  }
+
+  function handleOrbTap() {
+    const p = phaseRef.current;
+    if (p === 'speaking') {
+      tts.cancel();
+      fns.current.listen?.();
+      return;
+    }
+    if (speech.voiceError || p === 'paused') {
+      if (muted) { setMuted(false); mutedRef.current = false; }
+      fns.current.listen?.();
+    }
+  }
+
+  function handleClose() {
+    activeRef.current = false;
+    try { speech.stop(); } catch {}
+    tts.cancel();
+    onClose();
+  }
+
+  const displayPhase = (!speech.supported || !tts.supported)
+    ? 'unsupported'
+    : speech.voiceError
+      ? 'error'
+      : phase;
+  const caption = speech.voiceError || CONVO_CAPTIONS[displayPhase] || '';
+  const recent = chatLog.slice(-6);
+
+  return (
+    <div className="convo-overlay" role="dialog" aria-modal="true" aria-label="Voice conversation">
+      <div className="convo-topbar">
+        <span className="convo-badge"><span className="convo-live-dot" /> Live conversation</span>
+        <button type="button" className="convo-close" onClick={handleClose} aria-label="End conversation">End</button>
+      </div>
+
+      <div className="convo-stage">
+        <button
+          type="button"
+          className="convo-orb"
+          data-phase={displayPhase}
+          onClick={handleOrbTap}
+          aria-label={displayPhase === 'speaking' ? 'Interrupt and speak' : 'Conversation status'}
+        >
+          <span className="convo-orb-core" />
+          <span className="convo-orb-ring convo-orb-ring-1" />
+          <span className="convo-orb-ring convo-orb-ring-2" />
+          <span className="convo-orb-ring convo-orb-ring-3" />
+        </button>
+        <p className="convo-caption">{caption}</p>
+        {speech.interim && <p className="convo-interim">“{speech.interim}”</p>}
+      </div>
+
+      <div className="convo-feed" ref={feedRef}>
+        {recent.map((message, index) => (
+          <div className={`convo-line ${message.role}`} key={`${message.role}-${index}-${message.content.slice(0, 8)}`}>
+            {message.content}
+          </div>
+        ))}
+        {liveReply && <div className="convo-line companion convo-line-live">{liveReply}</div>}
+      </div>
+
+      <div className="convo-controls">
+        <button
+          type="button"
+          className={`convo-ctrl${muted ? ' convo-ctrl-active' : ''}`}
+          onClick={toggleMute}
+          disabled={displayPhase === 'unsupported'}
+          aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}
+        >
+          {muted ? <MicOffIcon /> : <MicIcon />}
+          <span>{muted ? 'Muted' : 'Mic on'}</span>
+        </button>
+        <button type="button" className="convo-ctrl convo-ctrl-end" onClick={handleClose} aria-label="End conversation">
+          <span>End</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MicOffIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <line x1="3" y1="3" x2="21" y2="21" />
+      <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6" />
+      <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+      <line x1="12" y1="19" x2="12" y2="22" />
+    </svg>
   );
 }
 

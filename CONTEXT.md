@@ -64,6 +64,7 @@ Postgres tables created in `src/lib/db.js`:
 | `UPSTASH_REDIS_REST_TOKEN` | Production | Rate limiting |
 | `CRON_SECRET` | Production | Cron job auth |
 | `GEMINI_MODEL` | Optional | Defaults to `gemini-2.5-flash` |
+| `GEMINI_VOICE_MODEL` | Optional | Low-latency model for live voice conversation; defaults to `gemini-2.5-flash-lite` |
 
 OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) are not app env vars. Configure them in the Clerk dashboard under Social Connections.
 
@@ -115,6 +116,14 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - **Controls:** tap orb to interrupt the AI (barge-in) and start speaking; Mute pauses listening; End closes. Crisis language is still detected server-side and the KIRAN helpline message is streamed/spoken.
 - **Persistence:** the voice endpoint stores both student and companion messages in the same `chat_threads`/`chat_messages` thread as text chat; the overlay also appends turns to the shared in-memory `chatLog` so the text Chat tab stays in sync.
 
+### Conversation Latency + Reply Quality Fixes (2026-06-21)
+- **Root cause of "doesn't reply properly" + long delay:** the default model `gemini-2.5-flash` has **thinking enabled by default**. Thinking tokens (a) added 2–10s before the first word and (b) ate the small `maxOutputTokens` budget, so replies often came back empty or truncated.
+- **Fix:** pass `providerOptions: { google: { thinkingConfig: { thinkingBudget: 0 } } }` on both `streamCompanionReply()` (voice) and `chatWithCompanion()` (text). Verified this is the correct option shape for the installed `@ai-sdk/google` v3. Replies are now proper, warm, and 1–3 sentences.
+- **Dedicated low-latency voice model:** `getFastModel()` uses `GEMINI_VOICE_MODEL` (default `gemini-2.5-flash-lite`) for the live voice path; depth matters less than time-to-first-word there.
+- **Reduced time-to-first-token in `/api/chat/voice`:** fetch chat history + journal entries in parallel and persist the student turn in the background (no longer awaited before streaming). Trimmed prompt context (last 6 turns, journal context capped at 3500 chars) to cut input tokens.
+- **Chats now reload from the DB:** added `GET /api/chat` (returns the thread's stored messages); the client calls it on mount (`loadChat`) so prior conversations reappear after reload — previously messages were written to the DB but never loaded back into the UI, which made it look like nothing saved.
+- **Measured (dev, tester session, fresh journal):** warm time-to-first-token ≈ 2–3s with replies streamed and spoken sentence-by-sentence; the first request after a code edit shows ~11s purely from Next dev recompiling the route (absent in production). Reply text verified non-empty and on-persona; `GET /api/chat` returns the persisted turns.
+
 ### Relief Room (new section)
 Four tools replacing generic breathing advice:
 - **Pressure Valve**: 60-second unfiltered writing dump → AI extracts the real underlying concern, names the emotion precisely, gives one 10-minute next step. Stateless (no DB).
@@ -140,6 +149,7 @@ Four tools replacing generic breathing advice:
 - `POST /api/future-letter` — Letter from future self
 - `POST /api/pressure-valve` — Pressure valve clarity
 - `POST /api/chat/voice` — streaming companion reply for live conversation mode (text/plain stream, auth-protected, persists both turns)
+- `GET /api/chat` — returns the user's stored companion thread + messages (loaded on mount so conversations persist across reloads)
 
 ### New DB Table
 - `worry_items`: id, user_key, worry_text, acknowledgment, is_in_their_control, what_they_can_control, park_until, park_message, resolved, created_at

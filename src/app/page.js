@@ -88,6 +88,14 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
     setGuestbook(data.posts || []);
   }, []);
 
+  const loadChat = useCallback(async () => {
+    const res = await fetch('/api/chat');
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.messages)) setChatLog(data.messages);
+    }
+  }, []);
+
   const hasAppAccess = isSignedIn || testerMode;
 
   useEffect(() => {
@@ -102,10 +110,10 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
       .then(() => {
         setShowOnboarding(!localStorage.getItem(seenKey));
         setError('');
-        return Promise.all([loadEntries(), loadGuestbook(), loadWorries()]);
+        return Promise.all([loadEntries(), loadGuestbook(), loadWorries(), loadChat()]);
       })
       .catch((err) => setError(err.message));
-  }, [hasAppAccess, loadEntries, loadGuestbook, loadWorries, user?.id]);
+  }, [hasAppAccess, loadEntries, loadGuestbook, loadWorries, loadChat, user?.id]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatLog]);
 

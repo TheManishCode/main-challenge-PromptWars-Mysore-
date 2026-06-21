@@ -7,6 +7,17 @@ import { crisisResponse, detectCrisis } from '@/lib/safety';
 import { assertSameOrigin, jsonError, rateLimit } from '@/lib/security';
 import { chatSchema, parseJsonBody } from '@/lib/validation';
 
+export async function GET() {
+  try {
+    const actor = await getActor();
+    const thread = await getOrCreateThread(actor.storageKey);
+    const messages = await listChatMessages(actor.storageKey, thread.id, 50);
+    return NextResponse.json({ thread, messages });
+  } catch (error) {
+    return jsonError(error);
+  }
+}
+
 export async function POST(request) {
   try {
     assertSameOrigin(request);

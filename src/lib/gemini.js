@@ -159,6 +159,15 @@ function getModel() {
   return google(process.env.GEMINI_MODEL || 'gemini-2.5-flash');
 }
 
+// Low-latency model for the live voice conversation, where time-to-first-word
+// matters more than depth. Falls back to flash-lite for fast first tokens.
+function getFastModel() {
+  const google = createGoogleGenerativeAI({
+    apiKey: getRequiredEnv('GEMINI_API_KEY')
+  });
+  return google(process.env.GEMINI_VOICE_MODEL || 'gemini-2.5-flash-lite');
+}
+
 /* ─── Entry Analysis ─────────────────────────────────────────────────────── */
 
 export async function analyzeEntry(input) {
@@ -239,7 +248,8 @@ ${message}
 
 Respond with empathy and curiosity. Reflect what you heard, sit with any pain they expressed, and end with one genuine question to understand them better. Do not lecture. Do not list tips. Ask before advising.`,
     temperature: 0.55,
-    maxTokens: 500
+    maxOutputTokens: 500,
+    providerOptions: { google: { thinkingConfig: { thinkingBudget: 0 } } }
   });
 
   return result.text;
@@ -264,14 +274,14 @@ function buildChatContext(recentEntries) {
 /* ─── Live Voice Companion (streaming) ───────────────────────────────────── */
 
 export function streamCompanionReply(message, recentEntries, history = []) {
-  const context = buildChatContext(recentEntries);
+  const context = buildChatContext(recentEntries.slice(0, 6));
   const transcript = history
-    .slice(-8)
+    .slice(-6)
     .map((m) => `${m.role === 'student' ? 'Student' : 'You'}: ${m.content}`)
     .join('\n');
 
   return streamText({
-    model: getModel(),
+    model: getFastModel(),
     system: [
       buildSafetyInstruction(),
       'You are a warm, supportive voice companion talking with a stressed exam student. This is a LIVE SPOKEN conversation, so sound like a caring friend, not a chatbot.',
@@ -283,14 +293,15 @@ export function streamCompanionReply(message, recentEntries, history = []) {
       'Never lecture, never moralize, never sound clinical. Stay grounded only in what the student actually shared.'
     ].join('\n'),
     prompt: `${transcript ? `Conversation so far:\n${transcript}\n\n` : ''}The student's recent journal context (use only if relevant, do not invent anything):
-${JSON.stringify(context).slice(0, 6000)}
+${JSON.stringify(context).slice(0, 3500)}
 
 Student just said (spoken aloud):
 ${message}
 
 Reply out loud now — warm, brief, validating, and engaging. Keep it to 1-3 natural sentences.`,
     temperature: 0.65,
-    maxOutputTokens: 220
+    maxOutputTokens: 320,
+    providerOptions: { google: { thinkingConfig: { thinkingBudget: 0 } } }
   });
 }
 

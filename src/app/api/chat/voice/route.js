@@ -38,14 +38,18 @@ export async function POST(request) {
     }
 
     const thread = await getOrCreateThread(actor.storageKey);
-    const history = await listChatMessages(actor.storageKey, thread.id, 20);
-    await saveChatMessage(actor.storageKey, thread.id, {
+    // Fetch context in parallel and start the model immediately; persist the
+    // student turn in the background so the first token isn't gated on a DB write.
+    const [history, entries] = await Promise.all([
+      listChatMessages(actor.storageKey, thread.id, 20),
+      listEntries(actor.storageKey, 12, { includeJournal: true })
+    ]);
+    saveChatMessage(actor.storageKey, thread.id, {
       id: randomUUID(),
       role: 'student',
       content: message
-    });
+    }).catch(() => {});
 
-    const entries = await listEntries(actor.storageKey, 15, { includeJournal: true });
     const result = streamCompanionReply(message, entries, history);
 
     const encoder = new TextEncoder();

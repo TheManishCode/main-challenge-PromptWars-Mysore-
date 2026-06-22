@@ -58,7 +58,6 @@ export default function SlimeBuddy({ burnoutRisk }) {
   const pos = useRef({ x: 140, y: 320 });
   const target = useRef({ x: 140, y: 320 });
   const cursor = useRef({ x: 140, y: 320, t: 0 });
-  const vel = useRef({ x: 0, y: 0 });
 
   const dragging = useRef(false);
   const down = useRef(null);
@@ -103,18 +102,13 @@ export default function SlimeBuddy({ burnoutRisk }) {
   // idle in place when close — identical pacing to the cat/dog/pixel pets.
   useEffect(() => {
     const SPEED = 10;
+    const REST = 70; // stop this far from the cursor so it trails like a pet, not glued
 
-    const apply = (moving) => {
+    // Move the whole creature; never distort the blob (no stretch). The body keeps
+    // its own gentle CSS wobble; we only nudge the pupils to look toward the cursor.
+    const apply = () => {
       if (rootRef.current) {
         rootRef.current.style.transform = `translate3d(${pos.current.x}px, ${pos.current.y}px, 0)`;
-      }
-      if (bodyRef.current && !meltingRef.current) {
-        if (moving) {
-          const angle = (Math.atan2(vel.current.y, vel.current.x) * 180) / Math.PI;
-          bodyRef.current.style.transform = `rotate(${angle}deg) scale(1.16, 0.84) rotate(${-angle}deg)`;
-        } else {
-          bodyRef.current.style.transform = '';
-        }
       }
       if (pupilRef.current) {
         const dx = cursor.current.x - pos.current.x;
@@ -128,28 +122,26 @@ export default function SlimeBuddy({ burnoutRisk }) {
       if (meltingRef.current) return;
       if (dragging.current) {
         pos.current = { x: target.current.x, y: target.current.y };
-        vel.current = { x: 0, y: 0 };
-        apply(false);
+        apply();
         return;
       }
-      if (reducedRef.current) { apply(false); return; }
+      if (reducedRef.current) { apply(); return; }
 
       const dx = pos.current.x - cursor.current.x;
       const dy = pos.current.y - cursor.current.y;
       const dist = Math.hypot(dx, dy);
-      if (dist < SPEED || dist < 48) { vel.current = { x: 0, y: 0 }; apply(false); return; }
+      if (dist < SPEED || dist < REST) { apply(); return; }
 
       const nx = pos.current.x - (dx / dist) * SPEED;
       const ny = pos.current.y - (dy / dist) * SPEED;
-      vel.current = { x: nx - pos.current.x, y: ny - pos.current.y };
       pos.current = {
         x: Math.min(Math.max(28, nx), window.innerWidth - 28),
         y: Math.min(Math.max(28, ny), window.innerHeight - 28)
       };
-      apply(true);
+      apply();
     };
 
-    apply(false);
+    apply();
     const id = setInterval(frame, 100);
     return () => clearInterval(id);
   }, []);

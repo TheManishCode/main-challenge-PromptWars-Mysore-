@@ -19,6 +19,7 @@
     "@ai-sdk/openai": "^3.0.73",
     "@ai-sdk/openai-compatible": "^2.0.51",
     "@clerk/nextjs": "^7.5.7",
+    "@remotion/player": "^4.0.481",
     "@upstash/ratelimit": "^2.0.6",
     "@upstash/redis": "^1.35.8",
     "ai": "^6.0.208",
@@ -28,6 +29,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",
+    "remotion": "^4.0.481",
     "zod": "^4.3.1"
   },
   "devDependencies": {

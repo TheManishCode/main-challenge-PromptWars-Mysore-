@@ -13,8 +13,10 @@
   --accent: #e45d4f;
   --gold: #d89b2b;
   --green: #4b8f63;
-  --shadow: 0 22px 60px rgba(49, 39, 28, 0.12);
-  --radius: 8px;
+  --shadow: 0 1px 2px rgba(49, 39, 28, 0.06), 0 12px 32px rgba(49, 39, 28, 0.10);
+  --shadow-sm: 0 1px 2px rgba(49, 39, 28, 0.06), 0 4px 12px rgba(49, 39, 28, 0.07);
+  --radius: 16px;
+  --radius-sm: 11px;
   color-scheme: light;
 }
 
@@ -31,7 +33,8 @@
   --accent: #ff897c;
   --gold: #e7bc64;
   --green: #8fc79b;
-  --shadow: 0 22px 60px rgba(0, 0, 0, 0.28);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 14px 36px rgba(0, 0, 0, 0.34);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 16px rgba(0, 0, 0, 0.28);
   color-scheme: dark;
 }
 
@@ -135,7 +138,7 @@ button:disabled {
 .invoke-button,
 .icon-button,
 .nav-pill {
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
   min-height: 42px;
   padding: 0 18px;
@@ -390,7 +393,7 @@ button:disabled {
 .input {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background: var(--paper);
   color: var(--ink);
   outline: none;
@@ -2171,6 +2174,65 @@ body,
   .slime-body { animation: none; }
 }
 
+
+/* ─── Brand mark ─────────────────────────────────────────────────────────────── */
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-orb {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #eafcfa, var(--brand) 55%, var(--brand-dark));
+  box-shadow: 0 0 0 0 rgba(47, 111, 115, 0.4), inset 4px 5px 10px rgba(255, 255, 255, 0.45);
+  animation: brand-breathe 4.5s ease-in-out infinite;
+}
+
+@keyframes brand-breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 6px 18px rgba(47, 111, 115, 0.3), inset 4px 5px 10px rgba(255, 255, 255, 0.45); }
+  50% { transform: scale(1.06); box-shadow: 0 10px 26px rgba(47, 111, 115, 0.4), inset 4px 5px 10px rgba(255, 255, 255, 0.5); }
+}
+
+/* ─── Remotion splash ───────────────────────────────────────────────────────── */
+
+.splash-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #f7f4ee;
+  display: grid;
+  place-items: center;
+  animation: splash-in 280ms ease both;
+}
+
+.splash-overlay > :first-child { width: 100%; height: 100%; }
+
+.splash-leaving {
+  animation: splash-out 320ms ease forwards;
+}
+
+@keyframes splash-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes splash-out { from { opacity: 1; } to { opacity: 0; visibility: hidden; } }
+
+.splash-skip {
+  position: absolute;
+  bottom: 22px;
+  right: 22px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.splash-skip:hover { color: var(--ink); }
 
 /* ─── Utility ────────────────────────────────────────────────────────────── */
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/nextjs';
 import OnekoPet, { PET_SKINS } from './components/OnekoPet';
 import SlimeBuddy from './components/SlimeBuddy';
+import SplashScreen from './components/SplashScreen';
 
 const ALL_PET_SKINS = [...PET_SKINS, { code: 'classic', label: 'Slime (soft)' }];
 
@@ -216,6 +217,7 @@ function ClerkAuthenticatedApp() {
 
 function AuthenticatedApp({ auth, clerkEnabled }) {
   const { isLoaded, isSignedIn, user } = auth;
+  const [showSplash, setShowSplash] = useState(false);
   const [testerMode, setTesterMode] = useState(false);
   const [section, setSection] = useState('journal');
   const [theme, setTheme] = useState('light');
@@ -234,6 +236,17 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   const chatEndRef = useRef(null);
 
   useEffect(() => { installApiKeyHeader(); }, []);
+  useEffect(() => {
+    let seen = true;
+    try { seen = Boolean(sessionStorage.getItem('mindtrail-splash-seen')); } catch {}
+    if (seen) return undefined;
+    const id = requestAnimationFrame(() => setShowSplash(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  const endSplash = useCallback(() => {
+    try { sessionStorage.setItem('mindtrail-splash-seen', '1'); } catch {}
+    setShowSplash(false);
+  }, []);
 
   const toggleBuddy = useCallback(() => {
     setBuddyOn((prev) => {
@@ -420,6 +433,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
     }
   }
 
+  if (showSplash) return <SplashScreen onDone={endSplash} />;
   if (!isLoaded) return <LoadingScreen />;
   if (!hasAppAccess) return <AuthScreen clerkEnabled={clerkEnabled} onTesterReady={() => setTesterMode(true)} />;
 
@@ -429,9 +443,12 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   return (
     <main className="product-shell">
       <header className="topbar">
-        <div>
-          <p className="eyebrow">Journal companion</p>
-          <h1>MindTrail</h1>
+        <div className="topbar-brand">
+          <span className="brand-orb" aria-hidden />
+          <div>
+            <p className="eyebrow">Journal companion</p>
+            <h1>MindTrail</h1>
+          </div>
         </div>
         <div className="topbar-actions">
           {burnoutRisk !== null && (

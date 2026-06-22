@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/nextjs';
 import OnekoPet, { PET_SKINS } from './components/OnekoPet';
+import SlimeBuddy from './components/SlimeBuddy';
+
+const ALL_PET_SKINS = [...PET_SKINS, { code: 'classic', label: 'Slime (soft)' }];
 
 const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
@@ -510,7 +513,9 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
         )}
       </div>
 
-      {buddyOn && <OnekoPet skin={petSkin} />}
+      {buddyOn && (petSkin === 'classic'
+        ? <SlimeBuddy burnoutRisk={burnoutRisk} />
+        : <OnekoPet skin={petSkin} />)}
     </main>
   );
 }
@@ -1757,7 +1762,7 @@ function SettingsModal({ buddyOn, onToggleBuddy, petSkin, onChangePetSkin, onClo
 
           <section className="settings-section">
             <p className="settings-title">Advanced — AI provider</p>
-            <p className="settings-sub">Choose provider, model, and base URL manually. Most providers speak the OpenAI-compatible API, so almost anything works — pick "Custom" and paste any base URL.</p>
+            <p className="settings-sub">Choose provider, model, and base URL manually. Most providers speak the OpenAI-compatible API, so almost anything works — pick “Custom” and paste any base URL.</p>
 
             {active.key ? (
               <div className="active-card">
@@ -1857,7 +1862,7 @@ function SettingsModal({ buddyOn, onToggleBuddy, petSkin, onChangePetSkin, onClo
             </div>
             {buddyOn && (
               <div className="pet-grid">
-                {PET_SKINS.map((s) => (
+                {ALL_PET_SKINS.map((s) => (
                   <button
                     key={s.code}
                     type="button"

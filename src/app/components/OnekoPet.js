@@ -94,7 +94,7 @@ export const PET_SKINS = [
   { code: 'maia', label: 'Maia' },
   { code: 'tora', label: 'Tora' },
   { code: 'vaporwave', label: 'Vaporwave' },
-  { code: 'slime', label: 'Slime' }
+  { code: 'slime', label: 'Slime (pixel)' }
 ];
 
 export default function OnekoPet({ skin = 'cat' }) {

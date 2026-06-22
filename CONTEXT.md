@@ -142,6 +142,12 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - **Conversation UI:** reactive orb with a live equalizer (animates while listening and speaking), idle/listening/thinking/speaking states, prominent live interim transcript, and a subhint about talking over the AI / using headphones.
 - **Site-wide fluid motion (palette unchanged):** added a global motion layer in `globals.css` — animated section transitions (`.section-view` keyed by active section), card/stat/guest-note hover lift, button press/lift feedback, animated nav-pill active state, soft input focus glow, chat-bubble slide-in, smooth theme color transitions, and a `prefers-reduced-motion` guard that disables it all.
 
+### Soft Slime Restored as a Pet Option (2026-06-22)
+- Brought back the original soft (non-pixel) CSS slime as a selectable pet **alongside** the oneko skins, with its original cursor-follow movement, squash/stretch, emotions (happy/curious/love/sleepy/surprised/angry/hurt/dizzy/melting), drag, and poke-to-melt.
+- Pet picker now lists Cat, Dog, Maia, Tora, Vaporwave, **Slime (pixel)**, and **Slime (soft)** (`classic`). `page.js` renders `SlimeBuddy` for `classic`, `OnekoPet` otherwise. Restored `SlimeBuddy.js` and its `.slime-*` CSS.
+- Richer speech bubbles: not just supportive — added a FUN pool (playful one-liners) mixed into idle chatter, and poke reactions now speak escalating **hurt** lines (ouch → angry → melt) plus recovery quips, matching the on-face emotions.
+- Verified: lint, 45 tests, build pass.
+
 ### Oneko Pixel Pet + Quota Messaging (2026-06-22)
 - **Chatbot "not replying" diagnosed:** the shared env Gemini key hit its free-tier **quota** ("You exceeded your current quota"). The code was fine — text returned the quota error, voice streamed its fallback. Fix: clearer, actionable errors that point users to add their own key (which works via the universal BYO-key system). `/api/chat` now catches model errors and returns a friendly 503 ("shared AI key is out of quota — add your own in Settings"); the voice route's empty-stream fallback says the same. The real cure is BYO key (already shipped).
 - **Replaced the CSS slime with a faithful oneko pixel pet** (`src/app/components/OnekoPet.js`). Ported the original oneko.js movement engine (cursor-follow, 8-direction run frames, idle → alert → tired → sleeping, wall-scratch) verbatim, plus drag. Real 256×128 sprite sheets downloaded into `public/oneko/` from the spicetify-oneko project: **cat (classic), dog, maia, tora, vaporwave**. Skin swap is live (no remount).

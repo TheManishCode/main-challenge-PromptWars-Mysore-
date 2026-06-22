@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { clearTesterSession, createTesterSession } from '@/lib/tester-session';
-import { assertSameOrigin, jsonError, rateLimit } from '@/lib/security';
+import { assertSameOrigin, getClientId, jsonError, rateLimit } from '@/lib/security';
 
 export async function POST(request) {
   try {
     assertSameOrigin(request);
-    await rateLimit('tester-login', { limit: 20, windowMs: 60 * 60 * 1000 });
+    await rateLimit(`tester-login:${getClientId(request)}`, { limit: 60, windowMs: 60 * 60 * 1000 });
     await createTesterSession();
     return NextResponse.json({ ok: true, provider: 'tester' }, { status: 201 });
   } catch (error) {

@@ -142,6 +142,12 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - **Conversation UI:** reactive orb with a live equalizer (animates while listening and speaking), idle/listening/thinking/speaking states, prominent live interim transcript, and a subhint about talking over the AI / using headphones.
 - **Site-wide fluid motion (palette unchanged):** added a global motion layer in `globals.css` — animated section transitions (`.section-view` keyed by active section), card/stat/guest-note hover lift, button press/lift feedback, animated nav-pill active state, soft input focus glow, chat-bubble slide-in, smooth theme color transitions, and a `prefers-reduced-motion` guard that disables it all.
 
+### Tester Login Rate-Limit Fix (2026-06-22)
+- **Bug:** tester login used a single GLOBAL rate-limit key `'tester-login'` (20/hour shared across all clients). Heavy automated testing exhausted the shared bucket, so every tester login returned 429 "Too many requests" — appearing as "tester login not working."
+- **Fix:** rate-limit per client via new `getClientId(request)` (x-forwarded-for / x-real-ip, falls back to `local`) and raised the limit to 60/hour per client. `POST /api/tester` now keys on `tester-login:${clientId}`.
+- Audited every other route: all already key rate limits per `actor.storageKey`, so none had this issue.
+- Verified live: 25 consecutive tester logins all return 201; home renders 200; core GET endpoints (entries/guestbook/worry/chat) 200; provider endpoints fail gracefully (400/`ok:false`). Lint, 45 tests, build pass.
+
 ### Soft Slime Restored as a Pet Option (2026-06-22)
 - Brought back the original soft (non-pixel) CSS slime as a selectable pet **alongside** the oneko skins, with its original cursor-follow movement, squash/stretch, emotions (happy/curious/love/sleepy/surprised/angry/hurt/dizzy/melting), drag, and poke-to-melt.
 - Pet picker now lists Cat, Dog, Maia, Tora, Vaporwave, **Slime (pixel)**, and **Slime (soft)** (`classic`). `page.js` renders `SlimeBuddy` for `classic`, `OnekoPet` otherwise. Restored `SlimeBuddy.js` and its `.slime-*` CSS.

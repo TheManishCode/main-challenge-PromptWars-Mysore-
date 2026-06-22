@@ -6,6 +6,12 @@ import { getAppOrigin, isProduction } from './env';
 const buckets = new Map();
 const upstashLimiters = new Map();
 
+export function getClientId(request) {
+  const fwd = request.headers.get('x-forwarded-for');
+  if (fwd) return fwd.split(',')[0].trim();
+  return request.headers.get('x-real-ip') || 'local';
+}
+
 export function assertSameOrigin(request) {
   const origin = request.headers.get('origin');
   if (!origin) return;

@@ -62,7 +62,6 @@ export default function SlimeBuddy({ burnoutRisk }) {
 
   const dragging = useRef(false);
   const down = useRef(null);
-  const wanderNext = useRef(0);
   const hits = useRef({ count: 0, last: 0 });
   const meltingRef = useRef(false);
   const reducedRef = useRef(false);
@@ -100,56 +99,22 @@ export default function SlimeBuddy({ burnoutRisk }) {
     return () => window.removeEventListener('mousemove', onMove);
   }, []);
 
+  // Oneko movement: step a fixed distance toward the cursor every 100ms and
+  // idle in place when close — identical pacing to the cat/dog/pixel pets.
   useEffect(() => {
-    let raf = 0;
-    const loop = (now) => {
-      raf = requestAnimationFrame(loop);
-      if (meltingRef.current) return;
+    const SPEED = 10;
 
-      const recentlyMoved = now - cursor.current.t < 2600;
-      let tx;
-      let ty;
-      if (dragging.current) {
-        tx = target.current.x;
-        ty = target.current.y;
-      } else if (reducedRef.current) {
-        tx = pos.current.x;
-        ty = pos.current.y;
-      } else if (recentlyMoved) {
-        const dx = pos.current.x - cursor.current.x;
-        const dy = pos.current.y - cursor.current.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        const gap = 52;
-        tx = cursor.current.x + (dx / dist) * gap;
-        ty = cursor.current.y + (dy / dist) * gap;
-      } else {
-        if (now > wanderNext.current) {
-          wanderNext.current = now + 2800 + Math.random() * 3600;
-          target.current = {
-            x: 70 + Math.random() * (window.innerWidth - 140),
-            y: 100 + Math.random() * (window.innerHeight - 200)
-          };
-        }
-        tx = target.current.x;
-        ty = target.current.y;
-      }
-
-      const ease = dragging.current ? 0.5 : 0.085;
-      const nx = pos.current.x + (tx - pos.current.x) * ease;
-      const ny = pos.current.y + (ty - pos.current.y) * ease;
-      vel.current = { x: nx - pos.current.x, y: ny - pos.current.y };
-      pos.current = { x: nx, y: ny };
-
-      const speed = Math.hypot(vel.current.x, vel.current.y);
-      const stretch = Math.min(0.3, speed * 0.018);
-      const angle = (Math.atan2(vel.current.y, vel.current.x) * 180) / Math.PI;
-
+    const apply = (moving) => {
       if (rootRef.current) {
         rootRef.current.style.transform = `translate3d(${pos.current.x}px, ${pos.current.y}px, 0)`;
       }
-      if (bodyRef.current) {
-        bodyRef.current.style.transform =
-          `rotate(${angle}deg) scale(${1 + stretch}, ${1 - stretch}) rotate(${-angle}deg)`;
+      if (bodyRef.current && !meltingRef.current) {
+        if (moving) {
+          const angle = (Math.atan2(vel.current.y, vel.current.x) * 180) / Math.PI;
+          bodyRef.current.style.transform = `rotate(${angle}deg) scale(1.16, 0.84) rotate(${-angle}deg)`;
+        } else {
+          bodyRef.current.style.transform = '';
+        }
       }
       if (pupilRef.current) {
         const dx = cursor.current.x - pos.current.x;
@@ -158,8 +123,35 @@ export default function SlimeBuddy({ burnoutRisk }) {
         pupilRef.current.style.transform = `translate(${(dx / d) * 3.4}px, ${(dy / d) * 3.4}px)`;
       }
     };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
+
+    const frame = () => {
+      if (meltingRef.current) return;
+      if (dragging.current) {
+        pos.current = { x: target.current.x, y: target.current.y };
+        vel.current = { x: 0, y: 0 };
+        apply(false);
+        return;
+      }
+      if (reducedRef.current) { apply(false); return; }
+
+      const dx = pos.current.x - cursor.current.x;
+      const dy = pos.current.y - cursor.current.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < SPEED || dist < 48) { vel.current = { x: 0, y: 0 }; apply(false); return; }
+
+      const nx = pos.current.x - (dx / dist) * SPEED;
+      const ny = pos.current.y - (dy / dist) * SPEED;
+      vel.current = { x: nx - pos.current.x, y: ny - pos.current.y };
+      pos.current = {
+        x: Math.min(Math.max(28, nx), window.innerWidth - 28),
+        y: Math.min(Math.max(28, ny), window.innerHeight - 28)
+      };
+      apply(true);
+    };
+
+    apply(false);
+    const id = setInterval(frame, 100);
+    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {

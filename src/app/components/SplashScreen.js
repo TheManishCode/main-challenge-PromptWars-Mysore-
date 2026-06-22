@@ -37,6 +37,10 @@ export default function SplashScreen({ onDone }) {
 
   return (
     <div className={`splash-overlay${leaving ? ' splash-leaving' : ''}`} role="status" aria-label="Loading MindTrail">
+      <div className="splash-fallback" aria-hidden>
+        <span className="splash-orb" />
+        <div className="splash-word">Mind<span>Trail</span></div>
+      </div>
       <Player
         ref={playerRef}
         component={MindTrailSplash}
@@ -44,7 +48,7 @@ export default function SplashScreen({ onDone }) {
         fps={FPS}
         compositionWidth={1280}
         compositionHeight={720}
-        style={{ width: '100%', height: '100%' }}
+        style={{ width: '100%', height: '100%', position: 'relative', zIndex: 1 }}
         autoPlay
         loop={false}
         controls={false}

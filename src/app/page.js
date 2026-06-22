@@ -231,21 +231,29 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   const [guestForm, setGuestForm] = useState({ authorName: '', message: '' });
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
-  const [buddyOn, setBuddyOn] = useState(() => { try { return localStorage.getItem(BUDDY_STORAGE) !== 'off'; } catch { return true; } });
-  const [petSkin, setPetSkin] = useState(() => { try { return localStorage.getItem(PET_SKIN_STORAGE) || 'cat'; } catch { return 'cat'; } });
+  const [buddyOn, setBuddyOn] = useState(true);
+  const [petSkin, setPetSkin] = useState('cat');
   const chatEndRef = useRef(null);
 
   useEffect(() => { installApiKeyHeader(); }, []);
+  // Show the splash on every load. Mount client-only (rAF) so Remotion's Player
+  // never runs during SSR and there is no hydration mismatch.
   useEffect(() => {
-    let seen = true;
-    try { seen = Boolean(sessionStorage.getItem('mindtrail-splash-seen')); } catch {}
-    if (seen) return undefined;
     const id = requestAnimationFrame(() => setShowSplash(true));
     return () => cancelAnimationFrame(id);
   }, []);
-  const endSplash = useCallback(() => {
-    try { sessionStorage.setItem('mindtrail-splash-seen', '1'); } catch {}
-    setShowSplash(false);
+  const endSplash = useCallback(() => setShowSplash(false), []);
+
+  // Hydration-safe: start at defaults (match SSR), then sync from localStorage.
+  useEffect(() => {
+    let on = true;
+    let skin = 'cat';
+    try {
+      on = localStorage.getItem(BUDDY_STORAGE) !== 'off';
+      skin = localStorage.getItem(PET_SKIN_STORAGE) || 'cat';
+    } catch {}
+    const id = requestAnimationFrame(() => { setBuddyOn(on); setPetSkin(skin); });
+    return () => cancelAnimationFrame(id);
   }, []);
 
   const toggleBuddy = useCallback(() => {
@@ -1439,23 +1447,38 @@ function AuthScreen({ clerkEnabled, onTesterReady }) {
   }
 
   return (
-    <div className="auth-frame">
-      <section className="auth-panel">
-        <p className="eyebrow">Private journal, real memory</p>
-        <h1>Sign in to enter MindTrail</h1>
-        <p>Your companion, journal history, AI insight bubbles, and guestbook identity all live behind your account.</p>
-        <div className="auth-actions">
-          <button className="primary-button" type="button" onClick={signInTester} disabled={testerLoading}>
-            {testerLoading ? 'Entering...' : 'Tester login'}
-          </button>
-          {clerkEnabled && (
-            <>
-              <SignInButton mode="modal"><button className="primary-button" type="button">Log in</button></SignInButton>
-              <SignUpButton mode="modal"><button className="secondary-button" type="button">Create account</button></SignUpButton>
-            </>
-          )}
+    <div className="auth-hero">
+      <div className="auth-hero-bg" aria-hidden />
+      <section className="auth-card">
+        <div className="auth-visual" aria-hidden>
+          <span className="auth-orb" />
+          <span className="auth-ring auth-ring-1" />
+          <span className="auth-ring auth-ring-2" />
+          <span className="auth-ring auth-ring-3" />
         </div>
-        {testerError && <p className="auth-error">{testerError}</p>}
+        <div className="auth-content">
+          <span className="auth-pill">Mental wellness for exam season</span>
+          <h1>Mind<span>Trail</span></h1>
+          <p>A private journal and calm AI companion for NEET, JEE, UPSC and board students — mood tracking, gentle guided chat, voice conversations, and a pet that keeps you company.</p>
+          <div className="auth-features">
+            <span>📓 Journal + AI insights</span>
+            <span>🎙️ Voice companion</span>
+            <span>🫧 Study buddy</span>
+            <span>🔒 Private by design</span>
+          </div>
+          <div className="auth-actions">
+            <button className="primary-button auth-cta" type="button" onClick={signInTester} disabled={testerLoading}>
+              {testerLoading ? 'Entering…' : 'Enter as tester'}
+            </button>
+            {clerkEnabled && (
+              <>
+                <SignInButton mode="modal"><button className="secondary-button" type="button">Log in</button></SignInButton>
+                <SignUpButton mode="modal"><button className="secondary-button" type="button">Create account</button></SignUpButton>
+              </>
+            )}
+          </div>
+          {testerError && <p className="auth-error">{testerError}</p>}
+        </div>
       </section>
     </div>
   );

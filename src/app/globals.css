@@ -932,6 +932,41 @@ input[type="range"] {
   50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent); }
 }
 
+/* Reusable dictation mic (lives in any input/textarea wrapper) */
+.mic-btn {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  transition: background 160ms ease, border-color 160ms ease, transform 140ms ease;
+}
+
+.mic-btn:hover { transform: translateY(-1px); }
+
+.mic-btn-live {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fffdf8;
+  animation: pulse-ring 1.2s ease-in-out infinite;
+}
+
+.mic-unsupported {
+  position: absolute;
+  right: 12px;
+  bottom: 9px;
+  opacity: 0.32;
+  font-size: 1rem;
+  pointer-events: none;
+}
+
 .voice-hint {
   margin: -8px 0 0;
   color: var(--accent);

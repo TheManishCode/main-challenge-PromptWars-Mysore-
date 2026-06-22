@@ -522,7 +522,6 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
             chatEndRef={chatEndRef}
             onText={setChatText}
             onSubmit={sendChat}
-            onSendText={dispatchChat}
             onAppendMessage={appendChatMessage}
           />
         )}
@@ -557,8 +556,8 @@ function ReliefRoomSection({ entries, worries, setWorries, loading, setLoading, 
   const [letter, setLetter] = useState(null);
   const timerRef = useRef(null);
 
-  const valveVoice = useFieldVoice(useCallback((txt) => setValveText((c) => c ? `${c} ${txt}` : txt), []));
-  const worryVoice = useFieldVoice(useCallback((txt) => setWorryText((c) => c ? `${c} ${txt}` : txt), []));
+  const valveRef = useRef(null);
+  const worryRef = useRef(null);
 
   useEffect(() => {
     if (!valveRunning) return;
@@ -687,6 +686,7 @@ function ReliefRoomSection({ entries, worries, setWorries, loading, setLoading, 
               </div>
               <div className="journal-textarea-wrap">
                 <textarea
+                  ref={valveRef}
                   className="input valve-textarea"
                   value={valveText}
                   onChange={(e) => setValveText(e.target.value)}
@@ -694,19 +694,8 @@ function ReliefRoomSection({ entries, worries, setWorries, loading, setLoading, 
                   autoFocus
                   maxLength={4000}
                 />
-                {valveVoice.supported && (
-                  <button
-                    type="button"
-                    className={`voice-btn${valveVoice.listening ? ' voice-btn-active' : ''}`}
-                    onClick={valveVoice.toggle}
-                    title={valveVoice.listening ? 'Stop dictation' : 'Dictate'}
-                    aria-label={valveVoice.listening ? 'Stop dictation' : 'Dictate into valve'}
-                  >
-                    {valveVoice.listening ? <StopIcon /> : <MicIcon />}
-                  </button>
-                )}
+                <MicButton targetRef={valveRef} onChange={setValveText} />
               </div>
-              {valveVoice.interim && <p className="voice-interim">{valveVoice.interim}</p>}
               {!valveRunning && valveSeconds >= 60 && (
                 <button className="primary-button" type="button" onClick={submitValve} disabled={loading === 'valve'}>
                   {loading === 'valve' ? 'Reading your mind...' : 'See what this is really about'}
@@ -753,6 +742,7 @@ function ReliefRoomSection({ entries, worries, setWorries, loading, setLoading, 
           <form className="worry-form" onSubmit={submitWorry}>
             <div className="journal-textarea-wrap">
               <textarea
+                ref={worryRef}
                 className="input"
                 value={worryText}
                 onChange={(e) => setWorryText(e.target.value)}
@@ -760,19 +750,8 @@ function ReliefRoomSection({ entries, worries, setWorries, loading, setLoading, 
                 maxLength={500}
                 required
               />
-              {worryVoice.supported && (
-                <button
-                  type="button"
-                  className={`voice-btn${worryVoice.listening ? ' voice-btn-active' : ''}`}
-                  onClick={worryVoice.toggle}
-                  title={worryVoice.listening ? 'Stop dictation' : 'Dictate'}
-                  aria-label={worryVoice.listening ? 'Stop dictation' : 'Dictate worry'}
-                >
-                  {worryVoice.listening ? <StopIcon /> : <MicIcon />}
-                </button>
-              )}
+              <MicButton targetRef={worryRef} onChange={setWorryText} />
             </div>
-            {worryVoice.interim && <p className="voice-interim">{worryVoice.interim}</p>}
             <button className="primary-button" type="submit" disabled={loading === 'worry'}>
               {loading === 'worry' ? 'Parking...' : 'Park this worry'}
             </button>
@@ -2252,69 +2231,167 @@ function useSpeechOutput() {
 // Reusable hook for real-time voice dictation in any input field.
 // onTextUpdate: called with each interim word (streaming)
 // onFinalText: called when a final transcript segment is committed
-function useVoiceDictation({ onTextUpdate, onFinalText, language, continuous = true } = {}) {
-  const speech = useSpeechInput();
-  const cbRef = useRef({ onTextUpdate, onFinalText });
-  useEffect(() => { cbRef.current = { onTextUpdate, onFinalText }; });
+function mapVoiceError(code) {
+  const isEdge = typeof navigator !== 'undefined' && navigator.userAgent.includes('Edg/');
+  const map = {
+    'not-allowed': 'Microphone blocked. Allow mic access in your browser, then reload.',
+    'service-not-allowed': isEdge
+      ? 'Turn ON Windows Settings → Privacy → Speech → "Online speech recognition", then reload.'
+      : 'Speech recognition is unavailable here. Try Chrome or Edge over https/localhost.',
+    'audio-capture': 'No microphone detected. Please connect one.',
+    'network': 'The browser speech service keeps dropping. You can still type.'
+  };
+  return map[code] || `Voice error: ${code}`;
+}
 
-  const toggle = useCallback(() => {
-    if (speech.listening) { speech.stop(); return; }
-    speech.start({
-      continuous,
-      lang: language,
-      onInterim: (txt) => cbRef.current.onTextUpdate?.(txt),
-      onResult: (txt) => cbRef.current.onFinalText?.(txt)
-    });
-  }, [speech, continuous, language]);
+// Reusable real-time dictation. Reads the target field's value + caret on start,
+// then streams interim words live and commits finals — inserting at the caret
+// without overwriting the rest of the field.
+function useVoiceDictation({ targetInputRef, onChange, language = 'en-US', continuous = true } = {}) {
+  const [listening, setListening] = useState(false);
+  const [interim, setInterim] = useState('');
+  const [error, setError] = useState('');
+
+  const supported = useSyncExternalStore(
+    noopSubscribe,
+    () => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+    () => false
+  );
+
+  const recRef = useRef(null);
+  const keepAliveRef = useRef(false);
+  const netRetryRef = useRef(0);
+  const anchorRef = useRef({ before: '', after: '' });
+  const committedRef = useRef('');
+  const cfgRef = useRef({ onChange, language, continuous });
+  useEffect(() => { cfgRef.current = { onChange, language, continuous }; });
+  useEffect(() => () => { keepAliveRef.current = false; try { recRef.current?.abort(); } catch {} }, []);
+
+  function compose(interimText) {
+    const seg = [committedRef.current, interimText].map((s) => (s || '').trim()).filter(Boolean).join(' ');
+    const { before, after } = anchorRef.current;
+    const joiner = before && seg && !/\s$/.test(before) ? ' ' : '';
+    return before + joiner + seg + after;
+  }
+
+  function build() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new SR();
+    rec.continuous = cfgRef.current.continuous;
+    rec.interimResults = true;
+    rec.lang = cfgRef.current.language || 'en-US';
+    rec.maxAlternatives = 1;
+    rec.onresult = (e) => {
+      let finalText = '';
+      let interimText = '';
+      for (let i = e.resultIndex; i < e.results.length; i += 1) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalText += t; else interimText += t;
+      }
+      if (finalText.trim()) {
+        committedRef.current = [committedRef.current, finalText.trim()].filter(Boolean).join(' ');
+      }
+      netRetryRef.current = 0;
+      setInterim(interimText);
+      cfgRef.current.onChange?.(compose(interimText));
+    };
+    rec.onerror = (e) => {
+      if (e.error === 'aborted' || e.error === 'no-speech') return;
+      if (e.error === 'network' && keepAliveRef.current && netRetryRef.current < 4) { netRetryRef.current += 1; return; }
+      keepAliveRef.current = false;
+      setInterim('');
+      setListening(false);
+      setError(mapVoiceError(e.error));
+    };
+    rec.onend = () => {
+      if (keepAliveRef.current) {
+        try { const next = build(); recRef.current = next; next.start(); return; } catch {}
+      }
+      keepAliveRef.current = false;
+      setInterim('');
+      setListening(false);
+    };
+    return rec;
+  }
+
+  function start() {
+    if (!supported) { setError('Voice input is not supported in this browser. Try Chrome or Edge.'); return; }
+    const el = targetInputRef?.current || null;
+    const value = el && typeof el.value === 'string' ? el.value : '';
+    const selStart = el && typeof el.selectionStart === 'number' ? el.selectionStart : value.length;
+    const selEnd = el && typeof el.selectionEnd === 'number' ? el.selectionEnd : value.length;
+    anchorRef.current = { before: value.slice(0, selStart), after: value.slice(selEnd) };
+    committedRef.current = '';
+    netRetryRef.current = 0;
+    setError('');
+    setInterim('');
+    keepAliveRef.current = cfgRef.current.continuous;
+    const prev = recRef.current;
+    if (prev) { prev.onresult = null; prev.onend = null; prev.onerror = null; try { prev.abort(); } catch {} }
+    const rec = build();
+    recRef.current = rec;
+    try { rec.start(); setListening(true); } catch {}
+  }
+
+  function stop() {
+    keepAliveRef.current = false;
+    setInterim('');
+    try { recRef.current?.abort(); } catch {}
+    setListening(false);
+  }
+
+  function toggle() { if (listening) stop(); else start(); }
 
   return {
-    listening: speech.listening,
-    interim: speech.interim,
-    error: speech.voiceError,
-    supported: speech.supported,
-    toggle,
-    stop: speech.stop
+    listening,
+    interim,
+    error,
+    supported,
+    state: listening ? 'listening' : 'idle',
+    start,
+    stop,
+    toggle
   };
 }
 
-// Convenience hook: append spoken text to a field value.
-// onAppend receives the final transcript string to append.
-function useFieldVoice(onAppend) {
-  const speech = useSpeechInput();
-  const appendRef = useRef(onAppend);
-  useEffect(() => { appendRef.current = onAppend; });
+function useSpeechRecognitionSupported() {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+    () => false
+  );
+}
 
-  const toggle = useCallback(() => {
-    if (speech.listening) { speech.stop(); return; }
-    speech.start({
-      continuous: true,
-      onResult: (txt) => appendRef.current?.(txt)
-    });
-  }, [speech]);
-
-  return {
-    listening: speech.listening,
-    interim: speech.interim,
-    voiceError: speech.voiceError,
-    supported: speech.supported,
-    toggle
-  };
+// Mic button that lives inside any input/textarea wrapper and dictates into it.
+function MicButton({ targetRef, onChange, language, className = '' }) {
+  const dictation = useVoiceDictation({
+    targetInputRef: targetRef,
+    onChange,
+    language: language || getPreferredLang(),
+    continuous: true
+  });
+  if (!dictation.supported) {
+    return <span className="mic-unsupported" title="Voice dictation is not supported in this browser">🎤</span>;
+  }
+  return (
+    <button
+      type="button"
+      className={`mic-btn${dictation.listening ? ' mic-btn-live' : ''} ${className}`}
+      onClick={dictation.toggle}
+      title={dictation.listening ? 'Stop dictation' : 'Dictate'}
+      aria-label={dictation.listening ? 'Stop voice dictation' : 'Start voice dictation'}
+      aria-pressed={dictation.listening}
+    >
+      {dictation.listening ? <StopIcon /> : <MicIcon />}
+    </button>
+  );
 }
 
 /* ─── Journal Section ─────────────────────────────────────────────────────── */
 
 function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }) {
-  const speech = useSpeechInput();
-
-  function handleVoiceMic() {
-    if (speech.listening) { speech.stop(); return; }
-    speech.start({
-      continuous: true,
-      onResult: (text) => {
-        onUpdate('journal', (current) => current ? `${current} ${text}` : text);
-      }
-    });
-  }
+  const journalRef = useRef(null);
+  const setJournal = useCallback((value) => onUpdate('journal', value), [onUpdate]);
 
   return (
     <section className="journal-layout">
@@ -2331,6 +2408,7 @@ function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }
         </div>
         <div className="journal-textarea-wrap">
           <textarea
+            ref={journalRef}
             className="input journal-textarea"
             value={form.journal}
             onChange={(e) => onUpdate('journal', e.target.value)}
@@ -2339,21 +2417,8 @@ function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }
             maxLength={4000}
             required
           />
-          {speech.supported && (
-            <button
-              type="button"
-              className={`voice-btn ${speech.listening ? 'voice-btn-active' : ''}`}
-              onClick={handleVoiceMic}
-              title={speech.listening ? 'Stop voice input' : 'Tap to dictate'}
-              aria-label={speech.listening ? 'Stop dictation' : 'Dictate journal entry'}
-            >
-              {speech.listening ? <StopIcon /> : <MicIcon />}
-            </button>
-          )}
+          <MicButton targetRef={journalRef} onChange={setJournal} />
         </div>
-        {speech.interim && <p className="voice-interim">{speech.interim}</p>}
-        {speech.listening && !speech.interim && <p className="voice-hint">Listening… speak naturally. Tap stop when done.</p>}
-        {speech.voiceError && <p className="voice-error-msg">{speech.voiceError}</p>}
         <button className="primary-button" type="submit" disabled={loading === 'entry'}>{loading === 'entry' ? 'Analysing...' : 'Save journal entry'}</button>
       </form>
 
@@ -2435,28 +2500,13 @@ function StopIcon() {
   );
 }
 
-function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit, onSendText, onAppendMessage }) {
-  const speech = useSpeechInput();
+function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit, onAppendMessage }) {
   const tts = useSpeechOutput();
-  const resultRef = useRef('');
+  const speechSupported = useSpeechRecognitionSupported();
+  const chatInputRef = useRef(null);
   const [convoOpen, setConvoOpen] = useState(false);
 
-  function handleVoiceToggle() {
-    if (speech.listening) { speech.stop(); return; }
-    resultRef.current = '';
-    speech.start({
-      continuous: false,
-      onResult: (text) => { resultRef.current = text; onText(text); },
-      onEnd: () => {
-        const captured = resultRef.current.trim();
-        resultRef.current = '';
-        if (captured) onSendText(captured);
-      }
-    });
-  }
-
-  const displayValue = speech.interim || chatText;
-  const liveSupported = speech.supported && tts.supported;
+  const liveSupported = speechSupported && tts.supported;
 
   return (
     <section className="chat-panel">
@@ -2496,31 +2546,19 @@ function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit,
         <div ref={chatEndRef} />
       </div>
 
-      {speech.voiceError && <p className="voice-error-msg">{speech.voiceError}</p>}
-
       <form className="chat-form" onSubmit={onSubmit}>
         <div className="chat-input-wrap">
           <input
+            ref={chatInputRef}
             className="input"
-            value={displayValue}
-            onChange={(e) => { if (!speech.listening) onText(e.target.value); }}
-            placeholder={speech.listening ? 'Listening…' : "What's actually going on right now?"}
+            value={chatText}
+            onChange={(e) => onText(e.target.value)}
+            placeholder="What's actually going on right now?"
             maxLength={1200}
-            readOnly={speech.listening}
           />
-          {speech.supported && (
-            <button
-              type="button"
-              className={`mic-pill${speech.listening ? ' mic-pill-active' : ''}`}
-              onClick={handleVoiceToggle}
-              disabled={loading}
-              aria-label={speech.listening ? 'Stop voice input' : 'Speak to companion'}
-            >
-              {speech.listening ? <StopIcon /> : <MicIcon />}
-            </button>
-          )}
+          <MicButton targetRef={chatInputRef} onChange={onText} />
         </div>
-        <button className="primary-button" type="submit" disabled={loading || speech.listening}>Send</button>
+        <button className="primary-button" type="submit" disabled={loading}>Send</button>
       </form>
     </section>
   );
@@ -2879,9 +2917,8 @@ function MicOffIcon() {
 /* ─── Guestbook ───────────────────────────────────────────────────────────── */
 
 function GuestbookSection({ posts, form, loading, onForm, onSubmit }) {
-  const msgVoice = useFieldVoice(
-    useCallback((txt) => onForm((f) => ({ ...f, message: f.message ? `${f.message} ${txt}` : txt })), [onForm])
-  );
+  const messageRef = useRef(null);
+  const setMessage = useCallback((value) => onForm((f) => ({ ...f, message: value })), [onForm]);
 
   return (
     <section className="guestbook-section">
@@ -2893,6 +2930,7 @@ function GuestbookSection({ posts, form, loading, onForm, onSubmit }) {
         <input className="input" value={form.authorName} onChange={(e) => onForm({ ...form, authorName: e.target.value })} placeholder="Name" maxLength={32} required />
         <div className="journal-textarea-wrap">
           <textarea
+            ref={messageRef}
             className="input"
             value={form.message}
             onChange={(e) => onForm({ ...form, message: e.target.value })}
@@ -2900,19 +2938,8 @@ function GuestbookSection({ posts, form, loading, onForm, onSubmit }) {
             maxLength={280}
             required
           />
-          {msgVoice.supported && (
-            <button
-              type="button"
-              className={`voice-btn${msgVoice.listening ? ' voice-btn-active' : ''}`}
-              onClick={msgVoice.toggle}
-              title={msgVoice.listening ? 'Stop dictation' : 'Dictate note'}
-              aria-label={msgVoice.listening ? 'Stop dictation' : 'Dictate guestbook note'}
-            >
-              {msgVoice.listening ? <StopIcon /> : <MicIcon />}
-            </button>
-          )}
+          <MicButton targetRef={messageRef} onChange={setMessage} />
         </div>
-        {msgVoice.interim && <p className="voice-interim">{msgVoice.interim}</p>}
         <button className="primary-button" type="submit" disabled={loading}>{loading ? 'Posting...' : 'Pin note'}</button>
       </form>
       <div className="guestbook-wall">

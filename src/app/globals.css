@@ -2036,3 +2036,76 @@ body,
   .scan-video { max-width: 100%; }
   .topbar-actions { flex-wrap: wrap; }
 }
+
+/* ─── Quick Key Panel ─────────────────────────────────────────────────────── */
+
+.qkp-saved {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--soft);
+  border-radius: var(--radius);
+}
+
+.qkp-saved-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.qkp-saved-info strong {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.qkp-saved-info span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.qkp-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.qkp-row {
+  display: flex;
+  gap: 8px;
+}
+
+.qkp-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.qkp-detected {
+  font-size: 12px;
+  color: var(--brand);
+  margin: 0;
+}
+
+.qkp-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qkp-model-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ─── Voice Wrap ──────────────────────────────────────────────────────────── */
+
+.voice-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

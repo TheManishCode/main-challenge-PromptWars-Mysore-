@@ -172,7 +172,7 @@ const DEFAULT_MODELS = {
   anthropic: () => 'claude-3-5-haiku-latest'
 };
 
-function normalizeBaseUrl(raw) {
+export function normalizeBaseUrl(raw) {
   if (!raw) return null;
   let url;
   try { url = new URL(raw.trim()); } catch { return null; }

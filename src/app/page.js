@@ -55,6 +55,40 @@ function presetByCode(code) {
   return PRESETS.find((p) => p.code === code) || null;
 }
 
+// Detect provider from API key prefix (best-effort, not guaranteed).
+function detectProviderFromKey(key) {
+  if (!key) return null;
+  if (key.startsWith('sk-ant-')) return presetByCode('anthropic');
+  if (key.startsWith('AIza')) return presetByCode('gemini');
+  if (key.startsWith('sk-or-')) return presetByCode('openrouter');
+  if (key.startsWith('gsk_')) return presetByCode('groq');
+  if (key.startsWith('sk-')) return presetByCode('openai');
+  return null;
+}
+
+// Pick the best model from a list using: free > flash/mini/haiku > first.
+function selectBestModel(models) {
+  if (!models || !models.length) return '';
+  if (models.length === 1) return models[0];
+  const lower = (m) => (typeof m === 'string' ? m : m?.id || '').toLowerCase();
+  const freeIdx = models.findIndex((m) => lower(m).includes('free'));
+  if (freeIdx >= 0) return models[freeIdx];
+  for (const kw of ['flash', 'mini', 'haiku', 'small', 'lite']) {
+    const idx = models.findIndex((m) => lower(m).includes(kw));
+    if (idx >= 0) return models[idx];
+  }
+  return models[0];
+}
+
+// Human-readable model tier label for display.
+function modelDisplayLabel(modelId) {
+  const m = (modelId || '').toLowerCase();
+  if (m.includes('flash') || m.includes('mini') || m.includes('lite')) return 'Fast';
+  if (m.includes('pro') || m.includes('opus') || m.includes('large') || m.includes('plus')) return 'Smart';
+  if (m.includes('haiku') || m.includes('small') || m.includes('tiny')) return 'Cheap';
+  return null;
+}
+
 function serverProviderFor(preset) {
   if (!preset) return 'openai-compatible';
   if (preset.kind === 'native') return preset.server;
@@ -103,6 +137,17 @@ function detectLang(text, fallback) {
     if (re.test(text)) return lang;
   }
   return fallback;
+}
+
+// Global registry so only one SpeechRecognition instance is active at once.
+// When a new voice input starts, the previous one is cleanly stopped first.
+const _voiceStop = { fn: null };
+function voiceRegistryRegister(stopFn) {
+  if (_voiceStop.fn) { try { _voiceStop.fn(); } catch {} }
+  _voiceStop.fn = stopFn;
+}
+function voiceRegistryRelease(stopFn) {
+  if (_voiceStop.fn === stopFn) _voiceStop.fn = null;
 }
 
 // Inject a user-supplied Gemini key (stored only in this browser) as a header on
@@ -482,6 +527,9 @@ function ReliefRoomSection({ entries, worries, setWorries, loading, setLoading, 
   const [letter, setLetter] = useState(null);
   const timerRef = useRef(null);
 
+  const valveVoice = useFieldVoice(useCallback((txt) => setValveText((c) => c ? `${c} ${txt}` : txt), []));
+  const worryVoice = useFieldVoice(useCallback((txt) => setWorryText((c) => c ? `${c} ${txt}` : txt), []));
+
   useEffect(() => {
     if (!valveRunning) return;
     timerRef.current = setInterval(() => {
@@ -607,14 +655,28 @@ function ReliefRoomSection({ entries, worries, setWorries, loading, setLoading, 
               <div className="valve-timer" data-urgent={valveSeconds >= 50}>
                 {60 - valveSeconds}s
               </div>
-              <textarea
-                className="input valve-textarea"
-                value={valveText}
-                onChange={(e) => setValveText(e.target.value)}
-                placeholder="Write everything. Don't think. Just type."
-                autoFocus
-                maxLength={4000}
-              />
+              <div className="journal-textarea-wrap">
+                <textarea
+                  className="input valve-textarea"
+                  value={valveText}
+                  onChange={(e) => setValveText(e.target.value)}
+                  placeholder="Write everything. Don't think. Just type."
+                  autoFocus
+                  maxLength={4000}
+                />
+                {valveVoice.supported && (
+                  <button
+                    type="button"
+                    className={`voice-btn${valveVoice.listening ? ' voice-btn-active' : ''}`}
+                    onClick={valveVoice.toggle}
+                    title={valveVoice.listening ? 'Stop dictation' : 'Dictate'}
+                    aria-label={valveVoice.listening ? 'Stop dictation' : 'Dictate into valve'}
+                  >
+                    {valveVoice.listening ? <StopIcon /> : <MicIcon />}
+                  </button>
+                )}
+              </div>
+              {valveVoice.interim && <p className="voice-interim">{valveVoice.interim}</p>}
               {!valveRunning && valveSeconds >= 60 && (
                 <button className="primary-button" type="button" onClick={submitValve} disabled={loading === 'valve'}>
                   {loading === 'valve' ? 'Reading your mind...' : 'See what this is really about'}
@@ -659,14 +721,28 @@ function ReliefRoomSection({ entries, worries, setWorries, loading, setLoading, 
             <p className="muted">Can&apos;t stop thinking about something? Park it here. The AI acknowledges it, tells you what you can control, and holds it so your brain can let go.</p>
           </div>
           <form className="worry-form" onSubmit={submitWorry}>
-            <textarea
-              className="input"
-              value={worryText}
-              onChange={(e) => setWorryText(e.target.value)}
-              placeholder="What thought keeps looping? Write it here..."
-              maxLength={500}
-              required
-            />
+            <div className="journal-textarea-wrap">
+              <textarea
+                className="input"
+                value={worryText}
+                onChange={(e) => setWorryText(e.target.value)}
+                placeholder="What thought keeps looping? Write it here..."
+                maxLength={500}
+                required
+              />
+              {worryVoice.supported && (
+                <button
+                  type="button"
+                  className={`voice-btn${worryVoice.listening ? ' voice-btn-active' : ''}`}
+                  onClick={worryVoice.toggle}
+                  title={worryVoice.listening ? 'Stop dictation' : 'Dictate'}
+                  aria-label={worryVoice.listening ? 'Stop dictation' : 'Dictate worry'}
+                >
+                  {worryVoice.listening ? <StopIcon /> : <MicIcon />}
+                </button>
+              )}
+            </div>
+            {worryVoice.interim && <p className="voice-interim">{worryVoice.interim}</p>}
             <button className="primary-button" type="submit" disabled={loading === 'worry'}>
               {loading === 'worry' ? 'Parking...' : 'Park this worry'}
             </button>
@@ -1363,6 +1439,181 @@ function AuthScreen({ clerkEnabled, onTesterReady }) {
   );
 }
 
+/* ─── Quick API Key Panel ─────────────────────────────────────────────────── */
+
+// Minimal paste-and-go UI: detect provider from key prefix, fetch models,
+// auto-select the best one, save to localStorage in one click.
+function QuickKeyPanel({ onKeyChanged }) {
+  const [keyDraft, setKeyDraft] = useState('');
+  const [detectedPreset, setDetectedPreset] = useState(null);
+  const [showManual, setShowManual] = useState(false);
+  const [manualCode, setManualCode] = useState('openrouter');
+  const [manualBase, setManualBase] = useState('');
+  const [models, setModels] = useState(null);
+  const [chosenModel, setChosenModel] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState(null);
+  const [saved, setSaved] = useState(readActive);
+
+  function onKeyInput(e) {
+    const val = e.target.value;
+    setKeyDraft(val);
+    setStatus(null);
+    setModels(null);
+    setChosenModel('');
+    const det = detectProviderFromKey(val.trim());
+    setDetectedPreset(det);
+    setShowManual(val.trim().length > 8 && !det);
+  }
+
+  async function handleAdd() {
+    const key = keyDraft.trim();
+    if (!key) { setStatus({ kind: 'err', text: 'Enter an API key.' }); return; }
+
+    const preset = detectedPreset ?? presetByCode(manualCode);
+    const baseURL = preset?.baseURL || (showManual ? manualBase.trim() : '') || null;
+    const serverProvider = detectedPreset?.kind === 'native' ? detectedPreset.server : 'openai-compatible';
+    const presetCode = preset?.code || manualCode || 'custom';
+
+    setLoading(true);
+    setStatus({ kind: 'busy', text: 'Connecting…' });
+    let modelList = [];
+
+    try {
+      const res = await fetch('/api/list-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, baseURL, provider: serverProvider })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.models)) modelList = data.models;
+      }
+    } catch {}
+
+    if (!modelList.length && preset?.model) modelList = [preset.model];
+    const best = modelList.length ? selectBestModel(modelList) : (preset?.model || '');
+    setLoading(false);
+    setModels(modelList);
+    setChosenModel(best);
+
+    if (modelList.length <= 1) {
+      commitSave(key, serverProvider, best, baseURL, presetCode);
+    } else {
+      setStatus({ kind: 'info', text: `${modelList.length} models found · Auto-selected: ${best || '—'}` });
+    }
+  }
+
+  function commitSave(key, serverProvider, model, baseURL, presetCode) {
+    try {
+      localStorage.setItem(API_KEY_STORAGE, key);
+      localStorage.setItem(PROVIDER_STORAGE, serverProvider);
+      localStorage.setItem(PRESET_STORAGE, presetCode);
+      if (model) localStorage.setItem(MODEL_STORAGE, model);
+      else localStorage.removeItem(MODEL_STORAGE);
+      if (baseURL) localStorage.setItem(BASEURL_STORAGE, baseURL);
+      else localStorage.removeItem(BASEURL_STORAGE);
+    } catch {}
+    setSaved(readActive());
+    setKeyDraft('');
+    setModels(null);
+    setStatus({ kind: 'ok', text: '✓ Connected' });
+    onKeyChanged?.();
+  }
+
+  function handleModelSave() {
+    const preset = detectedPreset ?? presetByCode(manualCode);
+    const baseURL = preset?.baseURL || (showManual ? manualBase.trim() : '') || null;
+    const serverProvider = detectedPreset?.kind === 'native' ? detectedPreset.server : 'openai-compatible';
+    commitSave(keyDraft.trim(), serverProvider, chosenModel, baseURL, preset?.code || manualCode);
+  }
+
+  function handleRemove() {
+    [API_KEY_STORAGE, PROVIDER_STORAGE, PRESET_STORAGE, MODEL_STORAGE, BASEURL_STORAGE]
+      .forEach((k) => { try { localStorage.removeItem(k); } catch {} });
+    setSaved(readActive());
+    setStatus({ kind: 'info', text: 'Removed. Using app default.' });
+    onKeyChanged?.();
+  }
+
+  const activePreset = saved.preset ? presetByCode(saved.preset) : null;
+  const hasKey = Boolean(saved.key);
+  const currentModel = saved.model || activePreset?.model || '';
+  const modelTag = modelDisplayLabel(currentModel);
+
+  if (hasKey) {
+    return (
+      <div className="qkp-saved">
+        <span className="active-dot" />
+        <div className="qkp-saved-info">
+          <strong>{activePreset?.label || 'Custom provider'}</strong>
+          <span>{currentModel}{modelTag ? ` · ${modelTag}` : ''}</span>
+        </div>
+        <button type="button" className="key-btn key-btn-remove" onClick={handleRemove}>Remove API Key</button>
+        {status && <p className={`settings-status status-${status.kind}`}>{status.text}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="qkp-input">
+      <div className="qkp-row">
+        <input
+          className="input"
+          type="password"
+          value={keyDraft}
+          onChange={onKeyInput}
+          placeholder="Paste API key (sk-…, AIza…, sk-ant-…)"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <button type="button" className="key-btn key-btn-insert" onClick={handleAdd} disabled={loading || !keyDraft.trim()}>
+          {loading ? '…' : 'Add'}
+        </button>
+      </div>
+
+      {detectedPreset && (
+        <p className="qkp-detected">Detected: <strong>{detectedPreset.label}</strong></p>
+      )}
+
+      {showManual && !detectedPreset && (
+        <div className="qkp-manual">
+          <select className="input" value={manualCode} onChange={(e) => { setManualCode(e.target.value); setStatus(null); }}>
+            {PRESETS.filter((p) => p.code !== 'custom').map((p) => (
+              <option key={p.code} value={p.code}>{p.label}</option>
+            ))}
+            <option value="custom">Custom / Other</option>
+          </select>
+          <input
+            className="input"
+            value={manualBase}
+            onChange={(e) => setManualBase(e.target.value)}
+            placeholder="Base URL (optional, e.g. https://api.example.com/v1)"
+            spellCheck={false}
+          />
+        </div>
+      )}
+
+      {models !== null && models.length > 1 && (
+        <div className="qkp-model-pick">
+          <p className="settings-sub">Model</p>
+          <div className="qkp-row">
+            <select className="input" value={chosenModel} onChange={(e) => setChosenModel(e.target.value)}>
+              {models.map((m) => {
+                const tag = modelDisplayLabel(m);
+                return <option key={m} value={m}>{m}{tag ? ` (${tag})` : ''}</option>;
+              })}
+            </select>
+            <button type="button" className="key-btn key-btn-insert" onClick={handleModelSave}>Save</button>
+          </div>
+        </div>
+      )}
+
+      {status && <p className={`settings-status status-${status.kind}`}>{status.text}</p>}
+    </div>
+  );
+}
+
 function SettingsMenu({ buddyOn, onToggleBuddy, petSkin, onChangePetSkin }) {
   const [open, setOpen] = useState(false);
   return (
@@ -1499,8 +1750,14 @@ function SettingsModal({ buddyOn, onToggleBuddy, petSkin, onChangePetSkin, onClo
 
         <div className="settings-modal-body">
           <section className="settings-section">
-            <p className="settings-title">AI provider</p>
-            <p className="settings-sub">Use your own key from <strong>any</strong> provider. Most speak the OpenAI-compatible API, so almost anything works — or pick “Custom” and paste any base URL. Stored only in this browser, never in our database, kept until you remove it.</p>
+            <p className="settings-title">API key</p>
+            <p className="settings-sub">Paste any API key and the system auto-detects the provider, fetches available models, and picks the best one. Stored only in this browser, never sent to our servers.</p>
+            <QuickKeyPanel onKeyChanged={() => setActive(readActive())} />
+          </section>
+
+          <section className="settings-section">
+            <p className="settings-title">Advanced — AI provider</p>
+            <p className="settings-sub">Choose provider, model, and base URL manually. Most providers speak the OpenAI-compatible API, so almost anything works — pick "Custom" and paste any base URL.</p>
 
             {active.key ? (
               <div className="active-card">
@@ -1792,6 +2049,14 @@ function useSpeechInput() {
     keepAliveRef.current = continuous;
     const rec = buildRec();
     recRef.current = rec;
+    // Register with global registry — stops any other active voice input first.
+    const myStop = () => {
+      keepAliveRef.current = false;
+      setInterim('');
+      setListening(false);
+      try { recRef.current?.abort(); } catch {}
+    };
+    voiceRegistryRegister(myStop);
     // SpeechRecognition triggers the browser's native mic permission dialog
     // on its own — no getUserMedia pre-check needed.
     rec.start();
@@ -1935,6 +2200,60 @@ function useSpeechOutput() {
   }, [supported]);
 
   return { supported, speaking, beginStream, cancel };
+}
+
+/* ─── Voice Dictation Hook (public reusable API) ─────────────────────────── */
+
+// Reusable hook for real-time voice dictation in any input field.
+// onTextUpdate: called with each interim word (streaming)
+// onFinalText: called when a final transcript segment is committed
+function useVoiceDictation({ onTextUpdate, onFinalText, language, continuous = true } = {}) {
+  const speech = useSpeechInput();
+  const cbRef = useRef({ onTextUpdate, onFinalText });
+  useEffect(() => { cbRef.current = { onTextUpdate, onFinalText }; });
+
+  const toggle = useCallback(() => {
+    if (speech.listening) { speech.stop(); return; }
+    speech.start({
+      continuous,
+      lang: language,
+      onInterim: (txt) => cbRef.current.onTextUpdate?.(txt),
+      onResult: (txt) => cbRef.current.onFinalText?.(txt)
+    });
+  }, [speech, continuous, language]);
+
+  return {
+    listening: speech.listening,
+    interim: speech.interim,
+    error: speech.voiceError,
+    supported: speech.supported,
+    toggle,
+    stop: speech.stop
+  };
+}
+
+// Convenience hook: append spoken text to a field value.
+// onAppend receives the final transcript string to append.
+function useFieldVoice(onAppend) {
+  const speech = useSpeechInput();
+  const appendRef = useRef(onAppend);
+  useEffect(() => { appendRef.current = onAppend; });
+
+  const toggle = useCallback(() => {
+    if (speech.listening) { speech.stop(); return; }
+    speech.start({
+      continuous: true,
+      onResult: (txt) => appendRef.current?.(txt)
+    });
+  }, [speech]);
+
+  return {
+    listening: speech.listening,
+    interim: speech.interim,
+    voiceError: speech.voiceError,
+    supported: speech.supported,
+    toggle
+  };
 }
 
 /* ─── Journal Section ─────────────────────────────────────────────────────── */
@@ -2515,6 +2834,10 @@ function MicOffIcon() {
 /* ─── Guestbook ───────────────────────────────────────────────────────────── */
 
 function GuestbookSection({ posts, form, loading, onForm, onSubmit }) {
+  const msgVoice = useFieldVoice(
+    useCallback((txt) => onForm((f) => ({ ...f, message: f.message ? `${f.message} ${txt}` : txt })), [onForm])
+  );
+
   return (
     <section className="guestbook-section">
       <form className="guestbook-form" onSubmit={onSubmit}>
@@ -2523,7 +2846,28 @@ function GuestbookSection({ posts, form, loading, onForm, onSubmit }) {
           <h2>Leave a handwritten note</h2>
         </div>
         <input className="input" value={form.authorName} onChange={(e) => onForm({ ...form, authorName: e.target.value })} placeholder="Name" maxLength={32} required />
-        <textarea className="input" value={form.message} onChange={(e) => onForm({ ...form, message: e.target.value })} placeholder="Write whatever you want to leave behind" maxLength={280} required />
+        <div className="journal-textarea-wrap">
+          <textarea
+            className="input"
+            value={form.message}
+            onChange={(e) => onForm({ ...form, message: e.target.value })}
+            placeholder="Write whatever you want to leave behind"
+            maxLength={280}
+            required
+          />
+          {msgVoice.supported && (
+            <button
+              type="button"
+              className={`voice-btn${msgVoice.listening ? ' voice-btn-active' : ''}`}
+              onClick={msgVoice.toggle}
+              title={msgVoice.listening ? 'Stop dictation' : 'Dictate note'}
+              aria-label={msgVoice.listening ? 'Stop dictation' : 'Dictate guestbook note'}
+            >
+              {msgVoice.listening ? <StopIcon /> : <MicIcon />}
+            </button>
+          )}
+        </div>
+        {msgVoice.interim && <p className="voice-interim">{msgVoice.interim}</p>}
         <button className="primary-button" type="submit" disabled={loading}>{loading ? 'Posting...' : 'Pin note'}</button>
       </form>
       <div className="guestbook-wall">

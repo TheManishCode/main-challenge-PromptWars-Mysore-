@@ -149,6 +149,11 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - Chat input no longer batch-records-then-sends; it dictates live into the box and the user sends normally. `useSpeechRecognitionSupported()` gates the Conversation launch button.
 - Verified: lint, 45 tests, build pass.
 
+### Remotion LinkedIn Project Video (2026-06-23)
+- Added a standalone Remotion video for the PromptWars Top 10 / LinkedIn post under `video/` (`index.js` registerRoot, `Root.jsx` Composition, `PromptWarsPost.jsx` the 1080×1080 / 30fps / 24s scene set: PromptWars hook → TOP 10 reveal → MindTrail showcase → feature bullets → CTA with verify link). Installed `@remotion/cli` (dev).
+- Scripts: `npm run video:studio` (preview/edit) and `npm run video:render` (→ `out/promptwars-linkedin.mp4`, gitignored). Rendered output ~2.9 MB.
+- **Important gotcha:** the folder must NOT be named `remotion/` — the project's `@/` path alias sets `baseUrl: "."`, so a bare `import 'remotion'` resolves to a top-level `remotion/` folder instead of the npm package, breaking the app build. Named it `video/` to avoid the collision. Editable post fields (`NAME`, `VERIFY_URL`) are constants at the top of `PromptWarsPost.jsx`.
+
 ### Splash Fix, Hydration Fix, Slime=Oneko Movement, Bolder UI (2026-06-22)
 - **Splash now actually shows:** it was gated by `sessionStorage` (which persists across reloads in a tab), so after the first view it never reappeared. Removed the gate — the Remotion splash plays on every load. Added a CSS-animated brand fallback (orb + wordmark) behind the `<Player>` so a branded animation shows even if the player is slow to mount.
 - **Hydration errors fixed:** `buddyOn`/`petSkin` were lazy `useState` initializers reading `localStorage` (server rendered defaults, client rendered stored values → mismatch). Now they start at fixed defaults (match SSR) and sync from `localStorage` in a `requestAnimationFrame` effect. Audited all other state: `showSplash` (rAF), `theme` (default), `getPreferredLang()` (runtime fn), and the settings-modal lazy reads (only render when opened) are all SSR-safe.

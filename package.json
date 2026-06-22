@@ -10,6 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "video:studio": "remotion studio video/index.js",
+    "video:render": "remotion render video/index.js PromptWarsPost out/promptwars-linkedin.mp4",
     "test": "vitest run",
     "verify": "npm run lint && npm run test && npm run build"
   },
@@ -33,6 +35,7 @@
     "zod": "^4.3.1"
   },
   "devDependencies": {
+    "@remotion/cli": "^4.0.481",
     "@tailwindcss/postcss": "^4.1.18",
     "eslint": "^9.39.2",
     "eslint-config-next": "16.2.9",

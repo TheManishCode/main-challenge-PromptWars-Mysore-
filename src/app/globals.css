@@ -1866,11 +1866,6 @@ body,
 
 .settings-sub { margin: 0; font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
 
-.settings-note { margin: 2px 0 0; font-size: 0.78rem; color: var(--brand); font-weight: 600; }
-
-.settings-link { font-size: 0.8rem; color: var(--brand); font-weight: 600; text-decoration: none; }
-.settings-link:hover { text-decoration: underline; }
-
 .key-btn {
   flex-shrink: 0;
   border-radius: 8px;
@@ -1972,28 +1967,7 @@ body,
 
 .settings-section { display: grid; gap: 9px; }
 
-.active-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--green) 45%, var(--line));
-  background: color-mix(in srgb, var(--green) 9%, var(--panel));
-  border-radius: 12px;
-}
-.active-card-main { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .active-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); flex-shrink: 0; box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 22%, transparent); }
-.active-name { margin: 0; font-weight: 700; font-size: 0.92rem; }
-.active-meta { margin: 2px 0 0; font-size: 0.78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.active-meta code { font-family: ui-monospace, Menlo, monospace; }
-
-.provider-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
-  gap: 8px;
-  margin-top: 4px;
-}
 
 .provider-chip {
   padding: 10px 10px;
@@ -2012,27 +1986,38 @@ body,
   background: color-mix(in srgb, var(--brand) 14%, var(--panel));
   box-shadow: 0 6px 16px rgba(47, 111, 115, 0.2);
 }
-.provider-chip[data-kind='local'] { border-style: dashed; }
-.provider-chip[data-kind='custom'] { font-style: italic; }
-
-.provider-fields { display: grid; gap: 8px; margin-top: 4px; }
-
-.provider-actions { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
-
-.key-btn-ghost {
-  background: transparent;
-  border: 1px solid var(--line);
-  color: var(--ink);
-}
-.key-btn-ghost:hover { background: var(--soft); }
 
 .settings-status { margin: 4px 0 0; font-size: 0.82rem; font-weight: 600; }
 .status-ok { color: var(--green); }
 .status-err { color: var(--accent); }
 .status-busy, .status-info { color: var(--muted); }
+.status-warn { color: #b9791c; }
 
-@media (max-width: 520px) {
-  .provider-grid { grid-template-columns: repeat(2, 1fr); }
+/* ─── Chat model picker (ChatGPT-style) ────────────────────────────────────── */
+
+.chat-heading-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+
+.chat-model-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px;
+  border-radius: var(--radius-sm, 11px);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  max-width: 100%;
+}
+.chat-model-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+.chat-model-name { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+.chat-model-select {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  outline: none;
+  max-width: 220px;
+  cursor: pointer;
 }
 
 /* ─── Oneko pixel pet ──────────────────────────────────────────────────────── */

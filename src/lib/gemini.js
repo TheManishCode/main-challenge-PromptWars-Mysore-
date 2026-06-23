@@ -241,24 +241,6 @@ async function getFastModel() {
   return resolveModel({ fast: true });
 }
 
-// Validate a user's provider/key/model with a tiny round-trip. Returns
-// { ok, model } or { ok:false, error }. Never logs the key.
-export async function testProvider({ provider, key, model, baseURL }) {
-  try {
-    const m = buildModelFor({ provider, key, model, baseURL });
-    const result = await generateText({
-      model: m,
-      prompt: 'Reply with the single word: ok',
-      maxOutputTokens: 8,
-      temperature: 0
-    });
-    return { ok: true, model: m.modelId || model || null, sample: (result.text || '').trim().slice(0, 40) };
-  } catch (error) {
-    const message = (error?.message || 'Could not reach this provider.').slice(0, 200);
-    return { ok: false, error: message };
-  }
-}
-
 /* ─── Entry Analysis ─────────────────────────────────────────────────────── */
 
 export async function analyzeEntry(input) {

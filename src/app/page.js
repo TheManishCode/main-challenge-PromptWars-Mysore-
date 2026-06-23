@@ -24,6 +24,7 @@ const INITIAL_FORM = { mood: 5, energy: 5, sleepHours: 7, exam: '', journal: '' 
 const API_KEY_STORAGE = 'mindtrail-gemini-key';
 const PROVIDER_STORAGE = 'mindtrail-provider';
 const MODEL_STORAGE = 'mindtrail-model';
+const MODELS_STORAGE = 'mindtrail-models';
 const BASEURL_STORAGE = 'mindtrail-base-url';
 const PRESET_STORAGE = 'mindtrail-preset';
 const BUDDY_STORAGE = 'mindtrail-buddy-on';
@@ -1467,67 +1468,106 @@ function AuthScreen({ clerkEnabled, onTesterReady }) {
 
 /* ─── Quick API Key Panel ─────────────────────────────────────────────────── */
 
-// Minimal paste-and-go UI: detect provider from key prefix, fetch models,
-// auto-select the best one, save to localStorage in one click.
+// Paste-and-go: detect the provider from the key prefix, auto-fetch the model
+// list, pick the best one, and save in one click. If auto-detection or the
+// model fetch fails, a soft warning shows a provider + model picker. Model
+// switching afterwards lives in the chat header (ChatGPT-style).
 function QuickKeyPanel({ onKeyChanged }) {
   const [keyDraft, setKeyDraft] = useState('');
   const [detectedPreset, setDetectedPreset] = useState(null);
-  const [showManual, setShowManual] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
   const [manualCode, setManualCode] = useState('openrouter');
   const [manualBase, setManualBase] = useState('');
+  const [manualModel, setManualModel] = useState('');
   const [models, setModels] = useState(null);
   const [chosenModel, setChosenModel] = useState('');
+  const [fetchFailed, setFetchFailed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(null);
   const [saved, setSaved] = useState(readActive);
 
-  function onKeyInput(e) {
-    const val = e.target.value;
-    setKeyDraft(val);
+  function resetDraft() {
     setStatus(null);
     setModels(null);
     setChosenModel('');
+    setFetchFailed(false);
+  }
+
+  function onKeyInput(e) {
+    const val = e.target.value;
+    setKeyDraft(val);
+    resetDraft();
     const det = detectProviderFromKey(val.trim());
     setDetectedPreset(det);
-    setShowManual(val.trim().length > 8 && !det);
+    setManualOpen(val.trim().length > 8 && !det);
+  }
+
+  function presetForSave() {
+    return detectedPreset ?? presetByCode(manualCode);
+  }
+
+  function baseUrlFor(preset) {
+    return preset?.baseURL || (manualOpen ? manualBase.trim() : '') || null;
+  }
+
+  async function fetchModelList(key, preset, baseURL) {
+    try {
+      const res = await fetch('/api/list-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, baseURL: baseURL || undefined, provider: serverProviderFor(preset) })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.models)) return data.models;
+      }
+    } catch {}
+    return [];
   }
 
   async function handleAdd() {
     const key = keyDraft.trim();
     if (!key) { setStatus({ kind: 'err', text: 'Enter an API key.' }); return; }
 
-    const preset = detectedPreset ?? presetByCode(manualCode);
-    const baseURL = preset?.baseURL || (showManual ? manualBase.trim() : '') || null;
-    const serverProvider = detectedPreset?.kind === 'native' ? detectedPreset.server : 'openai-compatible';
+    const preset = presetForSave();
+    const baseURL = baseUrlFor(preset);
     const presetCode = preset?.code || manualCode || 'custom';
+    const serverProvider = serverProviderFor(preset);
 
     setLoading(true);
     setStatus({ kind: 'busy', text: 'Connecting…' });
-    let modelList = [];
-
-    try {
-      const res = await fetch('/api/list-models', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key, baseURL, provider: serverProvider })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.models)) modelList = data.models;
-      }
-    } catch {}
-
-    if (!modelList.length && preset?.model) modelList = [preset.model];
-    const best = modelList.length ? selectBestModel(modelList) : (preset?.model || '');
+    const list = await fetchModelList(key, preset, baseURL);
     setLoading(false);
-    setModels(modelList);
-    setChosenModel(best);
 
-    if (modelList.length <= 1) {
-      commitSave(key, serverProvider, best, baseURL, presetCode);
-    } else {
-      setStatus({ kind: 'info', text: `${modelList.length} models found · Auto-selected: ${best || '—'}` });
+    if (list.length) {
+      cacheModels(list);
+      const best = selectBestModel(list);
+      setModels(list);
+      setChosenModel(best);
+      setFetchFailed(false);
+      if (list.length === 1) {
+        commitSave(key, serverProvider, best, baseURL, presetCode);
+      } else {
+        setStatus({ kind: 'info', text: `${list.length} models found · auto-selected ${best}. You can switch it in chat.` });
+      }
+      return;
     }
+
+    // Auto-fetch failed. If we confidently detected a native provider, fall back
+    // to its sane default model. Otherwise surface a soft warning + manual pick.
+    if (detectedPreset?.model) {
+      commitSave(key, serverProvider, detectedPreset.model, baseURL, presetCode);
+      return;
+    }
+    setModels(null);
+    setFetchFailed(true);
+    setManualOpen(true);
+    setManualModel((m) => m || presetByCode(manualCode)?.model || '');
+    setStatus({ kind: 'warn', text: "Couldn't auto-fetch models. Pick your provider and enter a model below." });
+  }
+
+  function cacheModels(list) {
+    try { localStorage.setItem(MODELS_STORAGE, JSON.stringify(list)); } catch {}
   }
 
   function commitSave(key, serverProvider, model, baseURL, presetCode) {
@@ -1543,19 +1583,27 @@ function QuickKeyPanel({ onKeyChanged }) {
     setSaved(readActive());
     setKeyDraft('');
     setModels(null);
-    setStatus({ kind: 'ok', text: '✓ Connected' });
+    setFetchFailed(false);
+    setManualOpen(false);
+    setStatus({ kind: 'ok', text: `✓ Connected · ${model || 'default model'}` });
     onKeyChanged?.();
   }
 
-  function handleModelSave() {
-    const preset = detectedPreset ?? presetByCode(manualCode);
-    const baseURL = preset?.baseURL || (showManual ? manualBase.trim() : '') || null;
-    const serverProvider = detectedPreset?.kind === 'native' ? detectedPreset.server : 'openai-compatible';
-    commitSave(keyDraft.trim(), serverProvider, chosenModel, baseURL, preset?.code || manualCode);
+  function saveChosen() {
+    const preset = presetForSave();
+    commitSave(keyDraft.trim(), serverProviderFor(preset), chosenModel, baseUrlFor(preset), preset?.code || manualCode);
+  }
+
+  function saveManual() {
+    const preset = presetByCode(manualCode);
+    const baseURL = preset?.baseURL || manualBase.trim() || null;
+    const model = manualModel.trim() || preset?.model || '';
+    if (!model && !baseURL) { setStatus({ kind: 'err', text: 'Enter a model name.' }); return; }
+    commitSave(keyDraft.trim(), serverProviderFor(preset), model, baseURL, preset?.code || manualCode);
   }
 
   function handleRemove() {
-    [API_KEY_STORAGE, PROVIDER_STORAGE, PRESET_STORAGE, MODEL_STORAGE, BASEURL_STORAGE]
+    [API_KEY_STORAGE, PROVIDER_STORAGE, PRESET_STORAGE, MODEL_STORAGE, MODELS_STORAGE, BASEURL_STORAGE]
       .forEach((k) => { try { localStorage.removeItem(k); } catch {} });
     setSaved(readActive());
     setStatus({ kind: 'info', text: 'Removed. Using app default.' });
@@ -1589,7 +1637,7 @@ function QuickKeyPanel({ onKeyChanged }) {
           type="password"
           value={keyDraft}
           onChange={onKeyInput}
-          placeholder="Paste API key (sk-…, AIza…, sk-ant-…)"
+          placeholder="Paste API key (sk-…, AIza…, sk-ant-…, hf_…)"
           autoComplete="off"
           spellCheck={false}
         />
@@ -1598,13 +1646,19 @@ function QuickKeyPanel({ onKeyChanged }) {
         </button>
       </div>
 
-      {detectedPreset && (
+      {detectedPreset && !fetchFailed && (
         <p className="qkp-detected">Detected: <strong>{detectedPreset.label}</strong></p>
       )}
 
-      {showManual && !detectedPreset && (
+      {manualOpen && (
         <div className="qkp-manual">
-          <select className="input" value={manualCode} onChange={(e) => { setManualCode(e.target.value); setStatus(null); }}>
+          <label className="settings-sub" htmlFor="qkp-provider">Provider</label>
+          <select
+            id="qkp-provider"
+            className="input"
+            value={manualCode}
+            onChange={(e) => { setManualCode(e.target.value); setManualModel(presetByCode(e.target.value)?.model || ''); setStatus(null); }}
+          >
             {PRESETS.filter((p) => p.code !== 'custom').map((p) => (
               <option key={p.code} value={p.code}>{p.label}</option>
             ))}
@@ -1617,6 +1671,18 @@ function QuickKeyPanel({ onKeyChanged }) {
             placeholder="Base URL (optional, e.g. https://api.example.com/v1)"
             spellCheck={false}
           />
+          {fetchFailed && (
+            <div className="qkp-row">
+              <input
+                className="input"
+                value={manualModel}
+                onChange={(e) => setManualModel(e.target.value)}
+                placeholder="Model name (e.g. gpt-4o-mini)"
+                spellCheck={false}
+              />
+              <button type="button" className="key-btn key-btn-insert" onClick={saveManual}>Save</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1630,7 +1696,7 @@ function QuickKeyPanel({ onKeyChanged }) {
                 return <option key={m} value={m}>{m}{tag ? ` (${tag})` : ''}</option>;
               })}
             </select>
-            <button type="button" className="key-btn key-btn-insert" onClick={handleModelSave}>Save</button>
+            <button type="button" className="key-btn key-btn-insert" onClick={saveChosen}>Save</button>
           </div>
         </div>
       )}
@@ -1677,28 +1743,7 @@ function readActive() {
 }
 
 function SettingsModal({ buddyOn, onToggleBuddy, petSkin, onChangePetSkin, onClose }) {
-  const [active, setActive] = useState(readActive);
-  const initialPreset = active.preset || 'gemini';
-  const [presetCode, setPresetCode] = useState(initialPreset);
-  const [keyDraft, setKeyDraft] = useState('');
-  const [modelDraft, setModelDraft] = useState(() => presetByCode(initialPreset)?.model || '');
-  const [baseDraft, setBaseDraft] = useState(() => presetByCode(initialPreset)?.baseURL || '');
-  const [status, setStatus] = useState(null); // { kind: 'ok'|'err'|'busy'|'info', text }
   const [lang, setLang] = useState(() => { try { return localStorage.getItem(LANG_STORAGE) || 'auto'; } catch { return 'auto'; } });
-
-  const preset = presetByCode(presetCode);
-  const isLocal = preset?.kind === 'local';
-  const isCustom = preset?.kind === 'custom';
-  const needsKey = !preset?.keyless;
-  const showBaseUrl = isCustom || isLocal;
-
-  function selectPreset(code) {
-    const p = presetByCode(code);
-    setPresetCode(code);
-    setModelDraft(p?.model || '');
-    setBaseDraft(p?.baseURL || '');
-    setStatus(null);
-  }
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -1711,61 +1756,6 @@ function SettingsModal({ buddyOn, onToggleBuddy, petSkin, onChangePetSkin, onClo
     try { localStorage.setItem(LANG_STORAGE, value); } catch {}
   }
 
-  function buildPayload() {
-    return {
-      key: needsKey ? keyDraft.trim() : 'local',
-      provider: serverProviderFor(preset),
-      model: modelDraft.trim() || preset?.model || '',
-      baseURL: showBaseUrl ? baseDraft.trim() : (preset?.baseURL || '')
-    };
-  }
-
-  async function testProvider() {
-    if (needsKey && !keyDraft.trim()) { setStatus({ kind: 'err', text: 'Enter your API key first.' }); return; }
-    if (showBaseUrl && !baseDraft.trim()) { setStatus({ kind: 'err', text: 'Enter the base URL first.' }); return; }
-    setStatus({ kind: 'busy', text: 'Testing connection…' });
-    try {
-      const res = await fetch('/api/provider-test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload())
-      });
-      const data = await res.json();
-      if (data.ok) setStatus({ kind: 'ok', text: `Connected ✓ ${data.model || ''}`.trim() });
-      else setStatus({ kind: 'err', text: data.error || 'Could not connect.' });
-    } catch {
-      setStatus({ kind: 'err', text: 'Could not reach the provider.' });
-    }
-  }
-
-  function save() {
-    const payload = buildPayload();
-    if (needsKey && payload.key.length < 8) { setStatus({ kind: 'err', text: 'That key looks too short.' }); return; }
-    if (showBaseUrl && !payload.baseURL) { setStatus({ kind: 'err', text: 'Enter the base URL.' }); return; }
-    try {
-      localStorage.setItem(API_KEY_STORAGE, payload.key);
-      localStorage.setItem(PROVIDER_STORAGE, payload.provider);
-      localStorage.setItem(PRESET_STORAGE, presetCode);
-      if (payload.model) localStorage.setItem(MODEL_STORAGE, payload.model); else localStorage.removeItem(MODEL_STORAGE);
-      if (payload.baseURL) localStorage.setItem(BASEURL_STORAGE, payload.baseURL); else localStorage.removeItem(BASEURL_STORAGE);
-    } catch {}
-    setActive(readActive());
-    setKeyDraft('');
-    setStatus({ kind: 'ok', text: `Saved. Using ${preset?.label} for all AI features.` });
-  }
-
-  function remove() {
-    try {
-      [API_KEY_STORAGE, PROVIDER_STORAGE, PRESET_STORAGE, MODEL_STORAGE, BASEURL_STORAGE].forEach((k) => localStorage.removeItem(k));
-    } catch {}
-    setActive(readActive());
-    setKeyDraft('');
-    setStatus({ kind: 'info', text: 'Removed. Using the app default again.' });
-  }
-
-  const activePreset = active.preset ? presetByCode(active.preset) : null;
-  const masked = active.key && active.key !== 'local' ? `${active.key.slice(0, 4)}••••••${active.key.slice(-3)}` : 'no key (local)';
-
   return (
     <div className="modal-scrim" onMouseDown={onClose}>
       <div className="settings-modal" role="dialog" aria-modal="true" aria-label="Settings" onMouseDown={(e) => e.stopPropagation()}>
@@ -1777,83 +1767,8 @@ function SettingsModal({ buddyOn, onToggleBuddy, petSkin, onChangePetSkin, onClo
         <div className="settings-modal-body">
           <section className="settings-section">
             <p className="settings-title">API key</p>
-            <p className="settings-sub">Paste any API key and the system auto-detects the provider, fetches available models, and picks the best one. Stored only in this browser, never sent to our servers.</p>
-            <QuickKeyPanel onKeyChanged={() => setActive(readActive())} />
-          </section>
-
-          <section className="settings-section">
-            <p className="settings-title">Advanced — AI provider</p>
-            <p className="settings-sub">Choose provider, model, and base URL manually. Most providers speak the OpenAI-compatible API, so almost anything works — pick “Custom” and paste any base URL.</p>
-
-            {active.key ? (
-              <div className="active-card">
-                <div className="active-card-main">
-                  <span className="active-dot" />
-                  <div>
-                    <p className="active-name">{activePreset?.label || active.provider || 'Custom provider'}</p>
-                    <p className="active-meta">{(active.model || activePreset?.model || 'default model')} · <code>{masked}</code></p>
-                  </div>
-                </div>
-                <button type="button" className="key-btn key-btn-remove" onClick={remove}>Remove</button>
-              </div>
-            ) : (
-              <p className="settings-note">No custom key set — using the app’s default Gemini key.</p>
-            )}
-
-            <div className="provider-grid" aria-label="Choose a provider">
-              {PRESETS.map((p) => (
-                <button
-                  key={p.code}
-                  type="button"
-                  className={`provider-chip${presetCode === p.code ? ' provider-chip-on' : ''}`}
-                  data-kind={p.kind}
-                  aria-pressed={presetCode === p.code}
-                  onClick={() => selectPreset(p.code)}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="provider-fields">
-              {needsKey && (
-                <input
-                  className="input"
-                  type="password"
-                  value={keyDraft}
-                  onChange={(e) => { setKeyDraft(e.target.value); setStatus(null); }}
-                  placeholder={`${preset?.label || 'Provider'} API key`}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              )}
-              {showBaseUrl && (
-                <input
-                  className="input"
-                  value={baseDraft}
-                  onChange={(e) => { setBaseDraft(e.target.value); setStatus(null); }}
-                  placeholder="Base URL (e.g. https://api.example.com/v1)"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              )}
-              <input
-                className="input"
-                value={modelDraft}
-                onChange={(e) => setModelDraft(e.target.value)}
-                placeholder={preset?.model ? `model (default: ${preset.model})` : 'model name'}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </div>
-
-            <div className="provider-actions">
-              <button type="button" className="key-btn key-btn-ghost" onClick={testProvider}>Test</button>
-              <button type="button" className="key-btn key-btn-insert" onClick={save}>Insert</button>
-              {preset?.keyUrl && <a className="settings-link" href={preset.keyUrl} target="_blank" rel="noreferrer">Get a key →</a>}
-            </div>
-
-            {status && <p className={`settings-status status-${status.kind}`}>{status.text}</p>}
+            <p className="settings-sub">Paste any provider key — OpenAI, Gemini, Anthropic, Hugging Face, Groq, OpenRouter, or any OpenAI-compatible endpoint. We auto-detect the provider, fetch its models, and pick the best one. If that fails, you can choose manually. Stored only in this browser, never sent to our servers. Switch models anytime from the chat.</p>
+            <QuickKeyPanel />
           </section>
 
           <section className="settings-section">
@@ -2502,6 +2417,93 @@ function StopIcon() {
   );
 }
 
+function readModelsCache() {
+  try {
+    const raw = localStorage.getItem(MODELS_STORAGE);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((m) => typeof m === 'string') : [];
+  } catch { return []; }
+}
+
+// ChatGPT-style model picker that lives in the chat header. Reads the active
+// provider/model from localStorage, lazily fetches the model list once if it
+// isn't cached, and persists the chosen model so every AI request uses it.
+function ChatModelPicker() {
+  const [models, setModels] = useState(readModelsCache);
+  const [current, setCurrent] = useState(() => { try { return localStorage.getItem(MODEL_STORAGE) || ''; } catch { return ''; } });
+  const [hasKey] = useState(() => { try { return Boolean(localStorage.getItem(API_KEY_STORAGE)); } catch { return false; } });
+  const fetchedRef = useRef(false);
+
+  useEffect(() => {
+    if (fetchedRef.current || !hasKey || models.length) return;
+    fetchedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const key = localStorage.getItem(API_KEY_STORAGE);
+        const baseURL = localStorage.getItem(BASEURL_STORAGE) || undefined;
+        const provider = localStorage.getItem(PROVIDER_STORAGE) || undefined;
+        const res = await fetch('/api/list-models', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, baseURL, provider })
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled || !Array.isArray(data.models) || !data.models.length) return;
+        setModels(data.models);
+        try { localStorage.setItem(MODELS_STORAGE, JSON.stringify(data.models)); } catch {}
+        if (!current) {
+          const best = selectBestModel(data.models);
+          setCurrent(best);
+          try { localStorage.setItem(MODEL_STORAGE, best); } catch {}
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [hasKey, models.length, current]);
+
+  function choose(e) {
+    const m = e.target.value;
+    setCurrent(m);
+    try { localStorage.setItem(MODEL_STORAGE, m); } catch {}
+  }
+
+  const defaultModel = 'gemini-2.5-flash';
+
+  if (!hasKey) {
+    return (
+      <div className="chat-model-bar" title="Add your own API key in Settings to switch models">
+        <span className="chat-model-dot" />
+        <span className="chat-model-name">{current || defaultModel}</span>
+      </div>
+    );
+  }
+
+  const options = models.length ? models : (current ? [current] : []);
+  if (!options.length) {
+    return (
+      <div className="chat-model-bar">
+        <span className="chat-model-dot" />
+        <span className="chat-model-name">{current || defaultModel}</span>
+      </div>
+    );
+  }
+
+  const value = options.includes(current) ? current : options[0];
+  return (
+    <div className="chat-model-bar">
+      <span className="chat-model-dot" />
+      <select className="chat-model-select" value={value} onChange={choose} aria-label="Chat model">
+        {options.map((m) => {
+          const tag = modelDisplayLabel(m);
+          return <option key={m} value={m}>{m}{tag ? ` · ${tag}` : ''}</option>;
+        })}
+      </select>
+    </div>
+  );
+}
+
 function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit, onAppendMessage }) {
   const tts = useSpeechOutput();
   const speechSupported = useSpeechRecognitionSupported();
@@ -2518,12 +2520,15 @@ function ChatSection({ chatLog, chatText, loading, chatEndRef, onText, onSubmit,
           <h2>Talk it through</h2>
           <p className="section-subtext muted">Asks questions, listens, and tries to understand you — not lecture you. Type, speak, or go hands-free.</p>
         </div>
-        {liveSupported && (
-          <button type="button" className="live-launch" onClick={() => setConvoOpen(true)}>
-            <SoundWaveIcon />
-            <span>Conversation</span>
-          </button>
-        )}
+        <div className="chat-heading-actions">
+          <ChatModelPicker />
+          {liveSupported && (
+            <button type="button" className="live-launch" onClick={() => setConvoOpen(true)}>
+              <SoundWaveIcon />
+              <span>Conversation</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {convoOpen && (

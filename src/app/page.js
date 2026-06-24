@@ -10,15 +10,15 @@ const ALL_PET_SKINS = [...PET_SKINS, { code: 'classic', label: 'Slime (soft)' }]
 
 const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
+// Logical, grouped IA: a Today hub plus five focused areas. Map lives inside
+// Journal (it visualises journal data); Recall + Scan live inside Study.
 const SECTIONS = [
-  { id: 'checkin', label: 'Check-in' },
+  { id: 'today', label: 'Today' },
   { id: 'journal', label: 'Journal' },
-  { id: 'recall', label: 'Recall' },
-  { id: 'relief', label: 'Relief Room' },
-  { id: 'map', label: 'Map' },
-  { id: 'chat', label: 'Chat' },
-  { id: 'scan', label: 'Scan' },
-  { id: 'guestbook', label: 'Guestbook' }
+  { id: 'companion', label: 'Companion' },
+  { id: 'relief', label: 'Relief' },
+  { id: 'study', label: 'Study' },
+  { id: 'wall', label: 'Wall' }
 ];
 
 const INITIAL_FORM = { mood: 5, energy: 5, sleepHours: 7, exam: '', journal: '' };
@@ -224,7 +224,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   const { isLoaded, isSignedIn, user } = auth;
   const [showSplash, setShowSplash] = useState(false);
   const [testerMode, setTesterMode] = useState(false);
-  const [section, setSection] = useState('checkin');
+  const [section, setSection] = useState('today');
   const [theme, setTheme] = useState('light');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [entries, setEntries] = useState([]);
@@ -467,7 +467,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
       setChatLog([]);
       setForm(INITIAL_FORM);
       setGuestForm({ authorName: '', message: '' });
-      setSection('checkin');
+      setSection('today');
     } catch (err) {
       setError(err.message || 'Unable to sign out');
     } finally {
@@ -482,69 +482,73 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   const burnoutRisk = metrics.burnoutRisk;
   const burnoutClass = burnoutRisk === null ? '' : burnoutRisk > 65 ? 'risk-high' : burnoutRisk > 40 ? 'risk-mid' : 'risk-low';
 
+  const activeLabel = SECTIONS.find((s) => s.id === section)?.label || '';
+
   return (
     <main className="product-shell">
       <header className="topbar">
         <div className="topbar-brand">
           <span className="brand-orb" aria-hidden />
-          <div>
-            <p className="eyebrow">Journal companion</p>
-            <h1>MindTrail</h1>
-          </div>
+          <span className="brand-word">MindTrail</span>
         </div>
+        <nav className="section-nav" aria-label="Primary">
+          {SECTIONS.map((item) => (
+            <button key={item.id} className="nav-pill" data-active={section === item.id} onClick={() => setSection(item.id)} type="button">
+              {item.label}
+            </button>
+          ))}
+        </nav>
         <div className="topbar-actions">
-          {burnoutRisk !== null && (
-            <div className={`burnout-badge ${burnoutClass}`} title="Burnout risk from recent entries">
-              <span>Burnout risk</span>
-              <strong>{burnoutRisk}%</strong>
-            </div>
-          )}
-          <SettingsMenu buddyOn={buddyOn} onToggleBuddy={toggleBuddy} petSkin={petSkin} onChangePetSkin={changePetSkin} />
-          <button className="icon-button" type="button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} title="Toggle theme">
-            {theme === 'light' ? 'Dark' : 'Light'}
+          <button
+            className="icon-button icon-button-round"
+            type="button"
+            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+            aria-label={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+            title="Toggle theme"
+          >
+            {theme === 'light' ? '☾' : '☀'}
           </button>
+          <SettingsMenu buddyOn={buddyOn} onToggleBuddy={toggleBuddy} petSkin={petSkin} onChangePetSkin={changePetSkin} />
           {isSignedIn ? <UserButton /> : <TesterProfileMenu onSignOut={handleTesterSignOut} loading={loading === 'signout'} />}
         </div>
       </header>
 
       {showOnboarding && <OnboardingCard name={user?.firstName || (testerMode ? 'Tester' : 'there')} onDone={finishOnboarding} />}
 
-      <section className="status-strip" aria-label="Journal summary">
-        <Stat label="Entries" value={metrics.count} />
-        <Stat label="Avg mood" value={metrics.mood} />
-        <Stat label="Avg sleep" value={metrics.sleep} />
-        {burnoutRisk !== null && <Stat label="Burnout risk" value={`${burnoutRisk}%`} highlight={burnoutRisk > 60} />}
-      </section>
-
-      <nav className="section-nav" aria-label="Primary">
-        {SECTIONS.map((item) => (
-          <button key={item.id} className="nav-pill" data-active={section === item.id} onClick={() => setSection(item.id)} type="button">
-            {item.label}
-          </button>
-        ))}
-      </nav>
-
       {error && <p className="notice">{error}</p>}
 
       <div className="section-view" key={section}>
-        {section === 'checkin' && (
-          <CheckInSection
+        {section === 'today' && (
+          <TodayHub
+            name={user?.firstName || (testerMode ? 'there' : 'there')}
+            metrics={metrics}
+            burnoutRisk={burnoutRisk}
+            burnoutClass={burnoutClass}
             entries={entries}
             loading={loading === 'checkin'}
             onQuickLog={quickCheckIn}
-            onGoToJournal={() => setSection('journal')}
-            onGoToChat={() => setSection('chat')}
+            onNavigate={setSection}
           />
         )}
-        {section === 'recall' && <RecallSection entries={entries} />}
         {section === 'journal' && (
-          <JournalSection
+          <JournalArea
             form={form}
             entries={entries}
             loading={loading}
             onUpdate={updateForm}
             onSubmit={submitEntry}
             onInvoke={invokeInsights}
+          />
+        )}
+        {section === 'companion' && (
+          <ChatSection
+            chatLog={chatLog}
+            chatText={chatText}
+            loading={loading === 'chat'}
+            chatEndRef={chatEndRef}
+            onText={setChatText}
+            onSubmit={sendChat}
+            onAppendMessage={appendChatMessage}
           />
         )}
         {section === 'relief' && (
@@ -557,20 +561,8 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
             setError={setError}
           />
         )}
-        {section === 'map' && <GraphMapSection entries={entries} />}
-        {section === 'chat' && (
-          <ChatSection
-            chatLog={chatLog}
-            chatText={chatText}
-            loading={loading === 'chat'}
-            chatEndRef={chatEndRef}
-            onText={setChatText}
-            onSubmit={sendChat}
-            onAppendMessage={appendChatMessage}
-          />
-        )}
-        {section === 'scan' && <ScanSection />}
-        {section === 'guestbook' && (
+        {section === 'study' && <StudyArea entries={entries} />}
+        {section === 'wall' && (
           <GuestbookSection
             posts={guestbook}
             form={guestForm}
@@ -585,6 +577,105 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
         ? <SlimeBuddy burnoutRisk={burnoutRisk} />
         : <OnekoPet skin={petSkin} />)}
     </main>
+  );
+}
+
+/* ─── Today hub ──────────────────────────────────────────────────────────── */
+
+function greetingFor(name) {
+  const h = new Date().getHours();
+  const part = h < 5 ? 'late night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 21 ? 'evening' : 'night';
+  if (part === 'late night') return `Still up, ${name}?`;
+  return `Good ${part}, ${name}`;
+}
+
+const TODAY_SHORTCUTS = [
+  { id: 'journal', glyph: '✎', title: 'Write it out', text: 'Journal an entry and get gentle insights.' },
+  { id: 'companion', glyph: '◗', title: 'Talk it through', text: 'Chat or speak with your companion.' },
+  { id: 'relief', glyph: '❍', title: 'Bring the pressure down', text: 'Calm tools for a panicky moment.' },
+  { id: 'study', glyph: '◆', title: 'Quick recall', text: 'A gentle self-check on what you studied.' }
+];
+
+function TodayHub({ name, metrics, burnoutRisk, burnoutClass, entries, loading, onQuickLog, onNavigate }) {
+  return (
+    <div className="today">
+      <header className="today-head">
+        <p className="eyebrow">{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+        <h2>{greetingFor(name)}</h2>
+        <p className="section-subtext muted">Start with a quick check-in. Everything else is here when you want it.</p>
+      </header>
+
+      <CheckInSection
+        entries={entries}
+        loading={loading}
+        onQuickLog={onQuickLog}
+        onGoToJournal={() => onNavigate('journal')}
+        onGoToChat={() => onNavigate('companion')}
+      />
+
+      {entries.length > 0 && (
+        <section className="today-snapshot" aria-label="Your recent snapshot">
+          <span className="today-snap-item"><strong>{metrics.count}</strong> check-in{metrics.count === 1 ? '' : 's'}</span>
+          <span className="today-snap-dot" aria-hidden>·</span>
+          <span className="today-snap-item">mood <strong>{metrics.mood}</strong></span>
+          <span className="today-snap-dot" aria-hidden>·</span>
+          <span className="today-snap-item">sleep <strong>{metrics.sleep}</strong></span>
+          {burnoutRisk !== null && (
+            <>
+              <span className="today-snap-dot" aria-hidden>·</span>
+              <span className={`today-snap-burnout ${burnoutClass}`}>burnout <strong>{burnoutRisk}%</strong></span>
+            </>
+          )}
+        </section>
+      )}
+
+      <section className="today-next" aria-label="Where to next">
+        <p className="today-next-label">Where to next?</p>
+        <div className="today-shortcuts">
+          {TODAY_SHORTCUTS.map((s) => (
+            <button key={s.id} type="button" className="today-shortcut" onClick={() => onNavigate(s.id)}>
+              <span className="today-shortcut-glyph" aria-hidden>{s.glyph}</span>
+              <span className="today-shortcut-body">
+                <span className="today-shortcut-title">{s.title}</span>
+                <span className="today-shortcut-text">{s.text}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* ─── Journal area (entries + map) ───────────────────────────────────────── */
+
+function JournalArea({ form, entries, loading, onUpdate, onSubmit, onInvoke }) {
+  const [view, setView] = useState('entries');
+  return (
+    <div className="area">
+      <nav className="relief-tabs area-subnav" aria-label="Journal views">
+        <button type="button" className="relief-tab" data-active={view === 'entries'} onClick={() => setView('entries')}>Entries</button>
+        <button type="button" className="relief-tab" data-active={view === 'map'} onClick={() => setView('map')}>Map</button>
+      </nav>
+      {view === 'entries'
+        ? <JournalSection form={form} entries={entries} loading={loading} onUpdate={onUpdate} onSubmit={onSubmit} onInvoke={onInvoke} />
+        : <GraphMapSection entries={entries} />}
+    </div>
+  );
+}
+
+/* ─── Study area (recall + scan) ─────────────────────────────────────────── */
+
+function StudyArea({ entries }) {
+  const [view, setView] = useState('recall');
+  return (
+    <div className="area">
+      <nav className="relief-tabs area-subnav" aria-label="Study tools">
+        <button type="button" className="relief-tab" data-active={view === 'recall'} onClick={() => setView('recall')}>Recall</button>
+        <button type="button" className="relief-tab" data-active={view === 'scan'} onClick={() => setView('scan')}>Scan</button>
+      </nav>
+      {view === 'recall' ? <RecallSection entries={entries} /> : <ScanSection />}
+    </div>
   );
 }
 
@@ -1904,15 +1995,6 @@ function OnboardingCard({ name, onDone }) {
       </div>
       <button className="primary-button" type="button" onClick={onDone}>Begin</button>
     </section>
-  );
-}
-
-function Stat({ label, value, highlight }) {
-  return (
-    <div className="stat" data-highlight={highlight}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
   );
 }
 

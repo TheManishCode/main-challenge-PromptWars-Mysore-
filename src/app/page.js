@@ -53,6 +53,7 @@ const PRESETS = [
   { code: 'moonshot', label: 'Moonshot / Kimi', kind: 'compat', baseURL: 'https://api.moonshot.ai/v1', model: 'moonshot-v1-8k', keyUrl: 'https://platform.moonshot.ai/console/api-keys' },
   { code: 'zai', label: 'Z.ai (GLM)', kind: 'compat', baseURL: 'https://api.z.ai/api/paas/v4', model: 'glm-4-flash', keyUrl: 'https://z.ai' },
   { code: 'huggingface', label: 'Hugging Face', kind: 'compat', baseURL: 'https://router.huggingface.co/v1', model: 'meta-llama/Llama-3.1-8B-Instruct', keyUrl: 'https://huggingface.co/settings/tokens' },
+  { code: 'apekey', label: 'ApeKey', kind: 'compat', baseURL: 'https://apekey.ai/v1', model: 'auto', keyUrl: 'https://apekey.ai' },
   { code: 'ollama', label: 'Ollama (local)', kind: 'local', baseURL: 'http://localhost:11434/v1', model: 'llama3.2', keyless: true },
   { code: 'lmstudio', label: 'LM Studio (local)', kind: 'local', baseURL: 'http://localhost:1234/v1', model: '', keyless: true },
   { code: 'llamacpp', label: 'llama.cpp (local)', kind: 'local', baseURL: 'http://localhost:8080/v1', model: '', keyless: true },
@@ -71,6 +72,7 @@ function detectProviderFromKey(key) {
   if (key.startsWith('sk-or-')) return presetByCode('openrouter');
   if (key.startsWith('gsk_')) return presetByCode('groq');
   if (key.startsWith('hf_')) return presetByCode('huggingface');
+  if (key.startsWith('sk_live_')) return presetByCode('apekey');
   if (key.startsWith('sk-')) return presetByCode('openai');
   return null;
 }

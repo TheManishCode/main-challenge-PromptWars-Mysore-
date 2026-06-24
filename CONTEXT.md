@@ -154,6 +154,11 @@ OAuth provider credentials (Google Client ID/Secret, GitHub Client ID/Secret) ar
 - Scripts: `npm run video:studio` (preview/edit) and `npm run video:render` (→ `out/promptwars-linkedin.mp4`, gitignored). Rendered output ~2.9 MB.
 - **Important gotcha:** the folder must NOT be named `remotion/` — the project's `@/` path alias sets `baseUrl: "."`, so a bare `import 'remotion'` resolves to a top-level `remotion/` folder instead of the npm package, breaking the app build. Named it `video/` to avoid the collision. Editable post fields (`NAME`, `VERIFY_URL`) are constants at the top of `PromptWarsPost.jsx`.
 
+### ApeKey Provider Added (2026-06-23)
+- Integrated **ApeKey** (`apekey.ai`) — an OpenAI-compatible multi-provider gateway. Verified from its docs: base URL `https://apekey.ai/v1`, `Authorization: Bearer` auth, key prefix `sk_live_`, default model `auto` (intelligent routing). Drop-in OpenAI-compatible.
+- Because the universal architecture already routes any base URL through `@ai-sdk/openai-compatible`, integration was a 2-line registry change with **no server edits**: added the `apekey` preset (kind `compat`, `https://apekey.ai/v1`, model `auto`) and `sk_live_` prefix auto-detection in `detectProviderFromKey`. Paste an `sk_live_…` key → auto-detected → routed through the existing compat path; if its `/v1/models` listing isn't supported the model gracefully falls back to `auto`.
+- Verified: `npm run verify` → lint clean, 45/45 tests, build OK (EXIT=0). Live round-trip needs a real `sk_live_` key (none available in this environment), but it uses the same proven OpenAI-compatible path already validated against Groq/OpenRouter.
+
 ### IA Restructure — Today Hub + Grouped Nav (2026-06-23)
 - **Problem:** the redesign reskinned but kept 8 flat equal tabs + a busy topbar (brand block + burnout badge + status-strip duplicated on every screen) — no hierarchy, dropped users into a bare section. Feedback: "doesn't make sense, make it clean and logical."
 - **New IA:** primary nav cut from 8 flat tabs to **6 logical areas** — `Today · Journal · Companion · Relief · Study · Wall`. Map folded into **Journal** (Entries/Map sub-toggle, since the graph visualises journal data); Recall + Scan folded into **Study** (Recall/Scan sub-toggle). `JournalArea` and `StudyArea` wrapper components own the sub-navs (reusing the `.relief-tab` pill style).

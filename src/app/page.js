@@ -11,7 +11,9 @@ const ALL_PET_SKINS = [...PET_SKINS, { code: 'classic', label: 'Slime (soft)' }]
 const hasClerk = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
 const SECTIONS = [
+  { id: 'checkin', label: 'Check-in' },
   { id: 'journal', label: 'Journal' },
+  { id: 'recall', label: 'Recall' },
   { id: 'relief', label: 'Relief Room' },
   { id: 'map', label: 'Map' },
   { id: 'chat', label: 'Chat' },
@@ -222,7 +224,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
   const { isLoaded, isSignedIn, user } = auth;
   const [showSplash, setShowSplash] = useState(false);
   const [testerMode, setTesterMode] = useState(false);
-  const [section, setSection] = useState('journal');
+  const [section, setSection] = useState('checkin');
   const [theme, setTheme] = useState('light');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [entries, setEntries] = useState([]);
@@ -360,6 +362,35 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
     }
   }
 
+  // 10-second check-in: an honest, low-effort entry composed from the student's
+  // taps. Reuses the same /api/entries pipeline (no mock data, no new backend).
+  async function quickCheckIn(values) {
+    setLoading('checkin');
+    setError('');
+    try {
+      const body = {
+        mood: values.mood,
+        energy: values.energy,
+        sleepHours: values.sleepHours,
+        exam: entries[0]?.exam || 'General prep',
+        journal: values.journal,
+        emoji: values.emoji,
+        studySubject: entries[0]?.studySubject || ''
+      };
+      const res = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save your check-in');
+      if (data.crisis) throw new Error(data.crisis.message);
+      setEntries((c) => [data.entry, ...c]);
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    } finally {
+      setLoading('');
+    }
+  }
+
   async function invokeInsights(entryId) {
     setLoading(`insights-${entryId}`);
     setError('');
@@ -436,7 +467,7 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
       setChatLog([]);
       setForm(INITIAL_FORM);
       setGuestForm({ authorName: '', message: '' });
-      setSection('journal');
+      setSection('checkin');
     } catch (err) {
       setError(err.message || 'Unable to sign out');
     } finally {
@@ -496,6 +527,16 @@ function AuthenticatedApp({ auth, clerkEnabled }) {
       {error && <p className="notice">{error}</p>}
 
       <div className="section-view" key={section}>
+        {section === 'checkin' && (
+          <CheckInSection
+            entries={entries}
+            loading={loading === 'checkin'}
+            onQuickLog={quickCheckIn}
+            onGoToJournal={() => setSection('journal')}
+            onGoToChat={() => setSection('chat')}
+          />
+        )}
+        {section === 'recall' && <RecallSection entries={entries} />}
         {section === 'journal' && (
           <JournalSection
             form={form}
@@ -2305,6 +2346,229 @@ function MicButton({ targetRef, onChange, language, className = '' }) {
 }
 
 /* ─── Journal Section ─────────────────────────────────────────────────────── */
+
+/* ─── 10-second Check-in ─────────────────────────────────────────────────── */
+
+const CHECKIN_FACES = [
+  { v: 2, emoji: '😣', label: 'Rough' },
+  { v: 4, emoji: '😕', label: 'Low' },
+  { v: 6, emoji: '😐', label: 'Okay' },
+  { v: 8, emoji: '🙂', label: 'Good' },
+  { v: 10, emoji: '😄', label: 'Great' }
+];
+const ENERGY_OPTS = [
+  { key: 'low', label: 'Drained', n: 3 },
+  { key: 'ok', label: 'So-so', n: 6 },
+  { key: 'good', label: 'Energised', n: 9 }
+];
+const SLEEP_OPTS = [
+  { key: 'short', label: 'Under 6h', n: 5 },
+  { key: 'ok', label: 'About 7h', n: 7 },
+  { key: 'rested', label: '8h or more', n: 8.5 }
+];
+
+function CheckInSection({ entries, loading, onQuickLog, onGoToJournal, onGoToChat }) {
+  const [face, setFace] = useState(null);
+  const [energy, setEnergy] = useState('ok');
+  const [sleep, setSleep] = useState('ok');
+  const [note, setNote] = useState('');
+  const [done, setDone] = useState(false);
+  const noteRef = useRef(null);
+
+  async function log() {
+    if (!face) return;
+    const f = CHECKIN_FACES.find((x) => x.v === face);
+    const e = ENERGY_OPTS.find((x) => x.key === energy);
+    const s = SLEEP_OPTS.find((x) => x.key === sleep);
+    const journal = `Quick check-in. Feeling ${f.label.toLowerCase()} right now. Energy: ${e.label.toLowerCase()}. Sleep: ${s.label.toLowerCase()}.${note.trim() ? ` ${note.trim()}` : ''}`;
+    const ok = await onQuickLog({ mood: f.v, energy: e.n, sleepHours: s.n, emoji: f.emoji, journal });
+    if (ok) setDone(true);
+  }
+
+  function reset() {
+    setFace(null); setEnergy('ok'); setSleep('ok'); setNote(''); setDone(false);
+  }
+
+  if (done) {
+    return (
+      <section className="checkin-panel">
+        <div className="checkin-done">
+          <div className="checkin-done-orb" aria-hidden>♡</div>
+          <h2>That&apos;s logged. You showed up today.</h2>
+          <p className="muted">Checking in counts, even on the heavy days. That&apos;s enough for now.</p>
+          <div className="checkin-done-actions">
+            <button type="button" className="secondary-button" onClick={onGoToChat}>Talk it through</button>
+            <button type="button" className="secondary-button" onClick={onGoToJournal}>Write more</button>
+            <button type="button" className="primary-button" onClick={reset}>Check in again</button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="checkin-panel">
+      <div className="checkin-head">
+        <p className="eyebrow">10-second check-in</p>
+        <h2>How are you, right now?</h2>
+        <p className="section-subtext muted">No writing needed. Just a few taps. The heavier the day, the more this is for you.</p>
+      </div>
+
+      <div className="checkin-faces" role="radiogroup" aria-label="How are you feeling?">
+        {CHECKIN_FACES.map((f) => (
+          <button
+            key={f.v}
+            type="button"
+            role="radio"
+            aria-checked={face === f.v}
+            className="checkin-face"
+            data-on={face === f.v}
+            onClick={() => setFace(f.v)}
+          >
+            <span className="checkin-face-emoji" aria-hidden>{f.emoji}</span>
+            <span className="checkin-face-label">{f.label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="checkin-rows">
+        <div className="checkin-row">
+          <span className="checkin-row-label">Energy</span>
+          <div className="checkin-chips">
+            {ENERGY_OPTS.map((o) => (
+              <button key={o.key} type="button" className="checkin-chip" data-on={energy === o.key} onClick={() => setEnergy(o.key)}>{o.label}</button>
+            ))}
+          </div>
+        </div>
+        <div className="checkin-row">
+          <span className="checkin-row-label">Last night&apos;s sleep</span>
+          <div className="checkin-chips">
+            {SLEEP_OPTS.map((o) => (
+              <button key={o.key} type="button" className="checkin-chip" data-on={sleep === o.key} onClick={() => setSleep(o.key)}>{o.label}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="checkin-note journal-textarea-wrap">
+        <input
+          ref={noteRef}
+          className="input"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="One word or line, if you want (optional)"
+          maxLength={160}
+        />
+        <MicButton targetRef={noteRef} onChange={setNote} />
+      </div>
+
+      <button type="button" className="primary-button checkin-submit" onClick={log} disabled={!face || loading}>
+        {loading ? 'Saving…' : face ? 'Log how I feel' : 'Pick a face to start'}
+      </button>
+      {entries.length > 0 && (
+        <p className="checkin-streak muted">{entries.length} check-in{entries.length === 1 ? '' : 's'} so far. Rest days count too.</p>
+      )}
+    </section>
+  );
+}
+
+/* ─── Active Recall (study self-check) ───────────────────────────────────── */
+
+function RecallSection({ entries }) {
+  const [focus, setFocus] = useState('');
+  const [recall, setRecall] = useState(null);
+  const [idx, setIdx] = useState(0);
+  const [revealed, setRevealed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState('');
+  const focusRef = useRef(null);
+
+  async function start() {
+    setLoading(true);
+    setMsg('');
+    setRecall(null);
+    try {
+      const res = await fetch('/api/recall', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ focus: focus.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not build a quiz right now.');
+      if (!data.recall) { setMsg(data.message || 'Nothing to quiz on yet.'); return; }
+      setRecall(data.recall);
+      setIdx(0);
+      setRevealed(false);
+    } catch (err) {
+      setMsg(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const q = recall?.questions?.[idx] || null;
+  const total = recall?.questions?.length || 0;
+  const isLast = idx >= total - 1;
+
+  return (
+    <section className="recall-panel">
+      <div className="recall-head">
+        <p className="eyebrow">Quick recall</p>
+        <h2>Prove you know more than the panic says</h2>
+        <p className="section-subtext muted">A gentle self-check from what you&apos;ve been studying. No scores, no streaks, no wrong answers, just a nudge to your memory.</p>
+      </div>
+
+      <div className="recall-start journal-textarea-wrap">
+        <input
+          ref={focusRef}
+          className="input"
+          value={focus}
+          onChange={(e) => setFocus(e.target.value)}
+          placeholder="A topic to quiz me on (optional, e.g. organic chemistry)"
+          maxLength={80}
+        />
+        <MicButton targetRef={focusRef} onChange={setFocus} />
+      </div>
+      <button type="button" className="primary-button" onClick={start} disabled={loading}>
+        {loading ? 'Thinking of good questions…' : recall ? 'New set of questions' : 'Quiz me'}
+      </button>
+
+      {msg && <p className="recall-msg muted">{msg}</p>}
+
+      {recall && q && (
+        <div className="recall-card">
+          <div className="recall-card-top">
+            <span className="recall-topic">{recall.topic}</span>
+            <span className="recall-progress">{idx + 1} / {total}</span>
+          </div>
+          {idx === 0 && recall.intro && <p className="recall-intro">{recall.intro}</p>}
+          <p className="recall-question">{q.question}</p>
+
+          {!revealed ? (
+            <div className="recall-actions">
+              <span className="recall-hint">Hint: {q.hint}</span>
+              <button type="button" className="secondary-button" onClick={() => setRevealed(true)}>Show answer</button>
+            </div>
+          ) : (
+            <>
+              <div className="recall-answer">
+                <span className="recall-answer-label">Answer</span>
+                <p>{q.answer}</p>
+              </div>
+              <div className="recall-actions">
+                {!isLast ? (
+                  <button type="button" className="primary-button" onClick={() => { setIdx((i) => i + 1); setRevealed(false); }}>Next question</button>
+                ) : (
+                  <button type="button" className="primary-button" onClick={start}>Another set</button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
 
 function JournalSection({ form, entries, loading, onUpdate, onSubmit, onInvoke }) {
   const journalRef = useRef(null);

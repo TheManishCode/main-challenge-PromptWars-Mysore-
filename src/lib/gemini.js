@@ -574,6 +574,50 @@ Rules:
   }));
 }
 
+/* ─── Active Recall ──────────────────────────────────────────────────────── */
+
+const recallSchema = z.object({
+  topic: z.string().min(2).max(80),
+  intro: z.string().min(8).max(240),
+  questions: z.array(z.object({
+    question: z.string().min(6).max(300),
+    hint: z.string().min(3).max(200),
+    answer: z.string().min(6).max(600)
+  })).min(1).max(5)
+});
+
+export async function generateRecallQuestions(entries, focus = '') {
+  const context = entries.slice(0, 8).map((entry) => ({
+    exam: entry.exam,
+    studySubject: entry.studySubject,
+    studyHours: entry.studyHours,
+    journal: entry.journal?.slice(0, 280),
+    createdAt: entry.createdAt
+  }));
+
+  const result = await generateObject({
+    model: await getModel(),
+    schema: recallSchema,
+    system: buildSafetyInstruction(),
+    prompt: `Create a short, low-pressure active-recall self-quiz for an Indian student preparing for high-stakes exams. The goal is to help them feel "I actually do know this", not to test or grade them.
+
+${focus ? `The student asked to be quizzed on: "${focus}". Prioritise this topic.` : 'Pick the topic from what they have actually been studying in their recent entries below.'}
+
+Recent study context (use what is real; do not invent that they studied something they did not):
+${JSON.stringify(context).slice(0, 4000)}
+
+Rules:
+- topic: a short, specific subject/chapter label (e.g. "Thermodynamics — first law", "Cell biology — mitosis"). If there is genuinely no signal and no focus was given, choose one high-yield concept for their exam (${context[0]?.exam || 'their exam'}).
+- intro: one warm, encouraging sentence framing this as a gentle self-check, not a test.
+- questions: 3 (max 5) concise active-recall questions a prepared student should be able to answer from memory.
+- For each: a one-line hint that nudges without giving it away, and a correct, accurate answer in 2-4 sentences.
+- Keep it academically accurate and exam-relevant. No medical, diagnostic, or personal-life content. Do not reference the student's mood or journal feelings — this is about their studies.`,
+    temperature: 0.5
+  });
+
+  return result.object;
+}
+
 /* ─── Suggestions ────────────────────────────────────────────────────────── */
 
 export async function generateSuggestions(entries) {

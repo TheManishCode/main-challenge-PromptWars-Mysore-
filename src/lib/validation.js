@@ -70,6 +70,10 @@ export const pressureValveSchema = z.object({
   text: z.string().trim().min(4).max(4000)
 });
 
+export const recallSchema = z.object({
+  focus: z.string().trim().max(80).optional().default('')
+});
+
 export function parseJsonBody(schema, body) {
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
